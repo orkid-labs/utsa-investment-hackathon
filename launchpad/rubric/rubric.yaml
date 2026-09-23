@@ -1,0 +1,104 @@
+# rubric.yaml — deterministic judging spec for the portfolio-management
+# hackathon. check.py executes every check against a running submission.
+# 100 points total. Same submission => same score.
+
+version: "1.0"
+timeout_seconds: 30
+
+checks:
+  - id: health
+    points: 5
+    desc: "GET /health returns ok:true"
+    request:
+      method: GET
+      path: /health
+    expect:
+      status: 200
+      json_contains: { ok: true }
+
+  - id: holdings_shape
+    points: 10
+    desc: "GET /portfolio/holdings returns a holdings array with ticker+weight"
+    request:
+      method: GET
+      path: /portfolio/holdings
+    expect:
+      status: 200
+      json_path: holdings
+      is_list: true
+      item_has_keys: [ticker, weight]
+
+  - id: holdings_weights_sum
+    points: 10
+    desc: "weights sum to 1.0 +/- 0.01, all >= 0 (long-only), tickers in universe"
+    request:
+      method: GET
+      path: /portfolio/holdings
+    expect:
+      status: 200
+      weights_sum_to: 1.0
+      weights_tol: 0.01
+      long_only: true
+      tickers_in_universe: true
+
+  - id: backtest_shape
+    points: 15
+    desc: "POST /backtest returns required metrics for a known request"
+    request:
+      method: POST
+      path: /backtest
+      body:
+        tickers: [AAPL, MSFT]
+        weights: [0.5, 0.5]
+        start: "2020-01-02"
+        end: "2020-12-31"
+    expect:
+      status: 200
+      has_keys: [n_days, total_return, ann_return, ann_vol, sharpe, max_drawdown]
+
+  - id: backtest_values
+    points: 25
+    desc: "backtest metrics match the reference computation within tolerance"
+    request:
+      method: POST
+      path: /backtest
+      body:
+        tickers: [AAPL, MSFT]
+        weights: [0.5, 0.5]
+        start: "2020-01-02"
+        end: "2020-12-31"
+    expect:
+      status: 200
+      reference_backtest: true
+      tolerance: 0.02          # relative tolerance on each metric
+
+  - id: screen_shape
+    points: 10
+    desc: "GET /screen returns filtered results list"
+    request:
+      method: GET
+      path: /screen?min_adv=50000000&limit=10
+    expect:
+      status: 200
+      json_path: results
+      is_list: true
+      item_has_keys: [ticker]
+
+  - id: asof_pit
+    points: 10
+    desc: "GET /asof returns only rows with date <= 'on' (no lookahead)"
+    request:
+      method: GET
+      path: /asof?ticker=AAPL&on=2024-03-31
+    expect:
+      status: 200
+      is_list: true
+      all_items_field_lte: { field: date, value: "2024-03-31" }
+
+  - id: responsiveness
+    points: 15
+    desc: "all checks complete within timeout_seconds each"
+    expect:
+      always: true
+
+# partial credit: checks are independent; failing early ones does not skip later ones

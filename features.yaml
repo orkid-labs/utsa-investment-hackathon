@@ -1,0 +1,54 @@
+# features.yaml — Equity Composite State Vector v2.0 manifest (hash-bound)
+version: "1.1"
+
+numeric_features:
+  # fundamentals / information dynamics
+  - fwd_fcf_fair_value          # Build: forward FCF fair value
+  - fundamental_surprise        # dual track: snapshot vs guidance
+  - kl_surprise_bits            # KL divergence surprise in bits
+  - measured_half_life          # decay fit on surprise series
+  - growth_kalman_update        # Kalman growth-state update
+  - fundamental_confidence
+  - log_fv_gap
+  - guidance_range_velocity     # Δmid/day between consecutive guidance events
+  # valuation
+  - composite_valuation_gap
+  - valuation_kurtosis
+  - cornish_fisher_gap
+  - mean_reversion_speed
+  # microstructure (Massive minute bars)
+  - minute_realized_diffusion
+  - amihud_illiq
+  - kyle_lambda
+  - fdt_deviation
+  - liquidity_roc
+  # options (OPRA contract-level day_aggs)
+  - atm_iv
+  - variance_risk_premium
+  - skew_25d                    # contract-level smile, 2014+
+  - rn_kurtosis                 # SVI tail moment
+  - oi_divergence               # BBG aggregate OI + contract volume
+  - term_slope
+  # macro
+  - treasury_funding_interact
+  - inflation_expectation
+  - funding_stress
+  - mktcap_duration_interact
+
+clock_fields:
+  - days_to_next_report         # PIT projection: last observed filing + median cadence
+  - days_to_opex                # major monthly options expiry
+
+control_flags:
+  - snapshot_track_used         # 1 where ticker/day precedes first guidance event
+  - guidance_absent             # 1 for tickers with no guidance history (~14%)
+  - options_thin_chain          # per-contract liquidity cut
+  - spread_filtered             # high-low range proxy (DEVIATION 4)
+  - half_life_imputed
+  - staleness_quarterly
+  - regime_calib_error_quantile
+
+pca:
+  target_numeric: 22
+  fit_window_start: "2017-01-01"
+  fit_exclude_holdout: true
