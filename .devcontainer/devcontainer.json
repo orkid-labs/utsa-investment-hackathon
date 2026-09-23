@@ -1,0 +1,20 @@
+{
+  "name": "UTSA Investment Hackathon",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements.lock && pip install -e sdk",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  },
+  "remoteEnv": {
+    "SV_DATA_TOKEN": "${localEnv:SV_DATA_TOKEN}",
+    "SV_DATA_ROOT": "${localEnv:SV_DATA_ROOT}"
+  }
+}

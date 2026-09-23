@@ -26,6 +26,18 @@ estimates, corporate guidance, SEC filings, corporate actions, and a
 
 ## Getting started
 
+**Fastest path — GitHub Codespaces / Dev Containers:** open this
+repository in a Codespace (or VS Code → "Reopen in Container"). The
+`.devcontainer` builds Python 3.12, installs the locked dependencies
+and the SDK — you just add your team token:
+
+```bash
+export SV_DATA_ROOT=https://pop-os.tail01ad.ts.net
+export SV_DATA_TOKEN=<your-team-token>
+```
+
+**Local setup** works the same way:
+
 ```bash
 pip install -e sdk/                          # the data SDK
 pip install -r launchpad/template/requirements.txt
