@@ -18,8 +18,8 @@ import polars as pl
 
 
 def _cal_lf(ds) -> pl.LazyFrame:
-    p = ds.root / "data/structural/report_calendar_us.parquet"
-    return pl.scan_parquet(p).filter(pl.col("filing_date").is_not_null())
+    return ds._scan("report_calendar_us").filter(
+        pl.col("filing_date").is_not_null())
 
 
 def report_calendar(ds, ticker: str | None = None):

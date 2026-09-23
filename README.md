@@ -50,14 +50,14 @@ svq doctor                                   # sanity-check access
 cd launchpad/template && uvicorn app:app --port 8000
 ```
 
-Open http://localhost:8000/docs — the starter app already scores
+Open <http://localhost:8000/docs> — the starter app already scores
 100/100 on the public rubric. Extend the finance logic; keep the
 endpoint shapes.
 
 ## Read these first
 
 | doc | what |
-|---|---|
+| --- | --- |
 | `launchpad/README.md` | contestant onboarding — what you're building, setup, judging |
 | `SUBMISSION.md` | what to hand in — endpoint URL + repo, and what judges run |
 | `FEATURES.md` | every state-vector feature explained in finance terms |
