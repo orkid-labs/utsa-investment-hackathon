@@ -59,6 +59,7 @@ endpoint shapes.
 | doc | what |
 |---|---|
 | `launchpad/README.md` | contestant onboarding — what you're building, setup, judging |
+| `SUBMISSION.md` | what to hand in — endpoint URL + repo, and what judges run |
 | `FEATURES.md` | every state-vector feature explained in finance terms |
 | `launchpad/RULES.md` | the mandate — long-only, PIT rules, sealed holdout |
 | `sdk/README.md` | full SDK reference |
