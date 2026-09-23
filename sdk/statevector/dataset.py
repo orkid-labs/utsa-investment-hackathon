@@ -28,6 +28,29 @@ def _as_date(v):
         return v
     return _date.fromisoformat(str(v)[:10])
 
+
+def _file_in_window(rel: str, start: str | None, end: str | None) -> bool:
+    """Keep a partition file iff its name-derived date overlaps the window.
+
+    Day partitions (YYYY-MM-DD.parquet) hold that day's rows; year
+    partitions (YYYY.parquet) hold that year's. Non-date names keep.
+    """
+    import re
+    stem = Path(rel).stem
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", stem):
+        if start and stem < start:
+            return False
+        if end and stem > end:
+            return False
+        return True
+    if re.fullmatch(r"\d{4}", stem):
+        if start and stem < start[:4]:
+            return False
+        if end and stem > end[:4]:
+            return False
+        return True
+    return True
+
 # canonical single-file panels
 CANONICAL_PANELS = {
     "fundamentals_actuals",
@@ -128,8 +151,13 @@ class Dataset:
 
     # -- core ------------------------------------------------------------------
 
-    def _scan_remote(self, name: str) -> pl.LazyFrame:
-        """Lazy scan over HTTP using the server's index.json manifest."""
+    def _scan_remote(self, name: str, start=None, end=None) -> pl.LazyFrame:
+        """Lazy scan over HTTP using the server's index.json manifest.
+
+        Date-named partitions (…/YYYY-MM-DD.parquet or …/YYYY.parquet)
+        are pruned to [start, end] before any HTTP fetch — this is the
+        difference between fetching ~30 day-files and fetching 3,198.
+        """
         try:
             entry = self._index["panels"][name]
         except KeyError:
@@ -137,9 +165,14 @@ class Dataset:
                 f"unknown panel {name!r}; available: "
                 f"{sorted(self._index['panels'])}"
             )
+        files = entry["files"]
+        if start or end:
+            s = str(start)[:10] if start else None
+            e = str(end)[:10] if end else None
+            files = [f for f in files if _file_in_window(f, s, e)]
         scans = []
         first_schema: dict | None = None
-        for rel in entry["files"]:
+        for rel in files:
             lf = pl.scan_parquet(self._url(rel))
             if first_schema is None:
                 # one footer fetch — assume homogeneous schema across
@@ -170,9 +203,9 @@ class Dataset:
             return out[0]
         return pl.concat(out, how="diagonal_relaxed")
 
-    def _scan(self, name: str) -> pl.LazyFrame:
+    def _scan(self, name: str, start=None, end=None) -> pl.LazyFrame:
         if self.base is not None:
-            return self._scan_remote(name)
+            return self._scan_remote(name, start=start, end=end)
         can = self.root / "data" / "canonical" / f"{name}.parquet"
         if can.exists():
             return pl.scan_parquet(can)
@@ -242,7 +275,7 @@ class Dataset:
             limit:  row cap (default {DEFAULT_LIMIT} on huge panels)
             lazy:   return a polars LazyFrame instead of pandas
         """
-        lf = self._scan(panel)
+        lf = self._scan(panel, start=start, end=end)
         cols = lf.collect_schema().names()
         tcol = "ticker" if "ticker" in cols else ("ticker_bbg" if "ticker_bbg" in cols else None)
         if ticker:

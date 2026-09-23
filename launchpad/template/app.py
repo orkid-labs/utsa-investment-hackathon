@@ -26,7 +26,7 @@ Judged endpoints (keep these paths + response shapes):
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query
@@ -73,7 +73,10 @@ def holdings(n: int = Query(10, ge=1, le=100)) -> dict:
 
     Option legs are allowed in the same array: {"ticker": "O:SPY...P..."}.
     """
-    px = ds._scan("stocks_daily")
+    # ADV20 needs only a trailing window — bound the scan so the remote
+    # thin client fetches ~30 day-files instead of all of them.
+    cutoff = str(date.today() - timedelta(days=45))
+    px = ds._scan("stocks_daily", start=cutoff)
     top = (
         px.with_columns((pl.col("close") * pl.col("volume")).alias("dollar_vol"))
         .group_by("ticker")
@@ -122,7 +125,7 @@ def backtest(req: BacktestRequest) -> dict:
         raise HTTPException(400, "weights must sum to ~1.0")
 
     wide = (
-        ds._scan("stocks_daily")
+        ds._scan("stocks_daily", start=str(req.start), end=str(req.end))
         .filter(
             pl.col("ticker").is_in(req.tickers)
             & pl.col("date").is_between(req.start, req.end)
@@ -177,7 +180,7 @@ def screen(
     limit: int = Query(25, le=200),
 ) -> dict:
     """Reference screen: liquidity filter + optional industry substring."""
-    px = ds._scan("stocks_daily")
+    px = ds._scan("stocks_daily", start=str(date.today() - timedelta(days=45)))
     adv = (
         px.with_columns((pl.col("close") * pl.col("volume")).alias("dv"))
         .group_by("ticker")
