@@ -32,6 +32,30 @@ from .pit import asof_fundamentals, report_calendar
 
 DATA = Path(os.environ.get("SV_DATA_ROOT", ".")) / "data"
 TOKEN = os.environ.get("SV_TOKEN")
+TOKENS_FILE = os.environ.get("SV_TOKENS_FILE")
+
+_tok_cache: dict = {"mtime": None, "map": {}}
+
+
+def _token_map() -> dict:
+    """token -> team slug from SV_TOKENS_FILE ("token,team" lines), hot-reloaded on mtime change."""
+    if not TOKENS_FILE:
+        return {}
+    try:
+        p = Path(TOKENS_FILE)
+        mt = p.stat().st_mtime
+        if mt != _tok_cache["mtime"]:
+            m = {}
+            for line in p.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    tok, _, team = line.partition(",")
+                    m[tok.strip()] = team.strip() or "?"
+            _tok_cache.update(mtime=mt, map=m)
+        return _tok_cache["map"]
+    except OSError:
+        return {}
+
 
 app = FastAPI(title="state-vector data server", version="1.0.0")
 
@@ -41,11 +65,18 @@ async def gate(request: Request, call_next):
     # read-only surface — nothing else is ever valid here
     if request.method not in ("GET", "HEAD"):
         return JSONResponse({"detail": "read-only"}, status_code=405)
-    if TOKEN and request.url.path != "/health":
-        auth = request.headers.get("authorization", "")
-        key = request.query_params.get("key", "")
-        if auth != f"Bearer {TOKEN}" and key != TOKEN:
-            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    if request.url.path == "/health":
+        return await call_next(request)
+    teams = _token_map()
+    auth = request.headers.get("authorization", "")
+    bearer = auth[7:] if auth.startswith("Bearer ") else ""
+    offered = bearer or request.query_params.get("key", "")
+    team = "admin" if TOKEN and offered == TOKEN else teams.get(offered)
+    if (TOKEN or teams) and team is None:
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    if team:
+        print(f"[auth] team={team} {request.method} {request.url.path}", flush=True)
+    request.state.team = team
     return await call_next(request)
 
 
