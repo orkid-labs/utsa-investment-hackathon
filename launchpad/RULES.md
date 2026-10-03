@@ -42,6 +42,32 @@ Your app holds positions expressed as weights per ticker-day:
   stock drops by roughly the dividend amount — ignoring it counts a
   real cash payment as a price loss.
 
+## Transaction costs
+
+Every backtest is evaluated **net of fees** — the reference engine is
+authoritative and applies the same model to your reported metrics:
+
+- **Stocks: 10 bps** per dollar traded. **Options (O: legs): 50 bps**
+  per dollar traded — wider spreads are the honest cost of convexity.
+- Buys and sells both pay. Turnover on a trade day is
+  `Σ|w_target − w_held|` per leg.
+- Entering the book at `start` is a trade; liquidating at `end` is a
+  trade. A simple buy-and-hold round trip therefore costs ~20 bps
+  on the invested notional.
+- `rebalance` decides how often you pay: `"none"` = buy-and-hold
+  (weights drift, entry+exit only); `"daily"`, `"weekly"`,
+  `"monthly"` reset to target weights at that day's close and pay the
+  turnover. Rebalancing more often is a real decision now.
+- `POST /backtest` accepts an optional `cost_bps` override (flat,
+  per-leg) for sensitivity analysis — the reference recomputes with
+  whatever you declare, so declaring a lower number moves the
+  goalposts with you. The judged default is the schedule above.
+- Your response must report `turnover` and `cost_total` alongside the
+  performance metrics — cost disclosure is scored.
+
+The shared engine is `statevector.backtest.run_backtest` — import it
+rather than re-deriving; it is exactly what the judges run.
+
 ## Data windows
 
 - Storage: **2014-01-01 → present**
