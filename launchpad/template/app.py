@@ -32,7 +32,12 @@ import polars as pl
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from statevector import Dataset, parse_occ  # noqa: F401
+from statevector import (
+    Dataset,
+    parse_occ,  # noqa: F401
+    run_backtest,
+)
+from statevector.backtest import REBALANCE_CHOICES
 
 ds = Dataset()
 app = FastAPI(title="hackathon portfolio api", version="0.1.0")
@@ -102,7 +107,8 @@ class BacktestRequest(BaseModel):
     weights: list[float] | None = None          # default: equal weight, all >= 0
     start: date
     end: date
-    rebalance: str = "none"
+    rebalance: str = "none"                     # none|daily|weekly|monthly
+    cost_bps: float | None = None               # flat per-leg override; None = schedule
 
 
 @app.post("/backtest")
@@ -123,6 +129,10 @@ def backtest(req: BacktestRequest) -> dict:
         raise HTTPException(400, "long-only: all weights must be >= 0")
     if abs(sum(weights) - 1.0) > 0.01:
         raise HTTPException(400, "weights must sum to ~1.0")
+    if req.rebalance not in REBALANCE_CHOICES:
+        raise HTTPException(400, f"rebalance must be one of {REBALANCE_CHOICES}")
+    if req.cost_bps is not None and req.cost_bps < 0:
+        raise HTTPException(400, "cost_bps must be >= 0")
 
     wide = (
         ds._scan("stocks_daily", start=str(req.start), end=str(req.end))
@@ -145,29 +155,21 @@ def backtest(req: BacktestRequest) -> dict:
     if rets.height == 0:
         raise HTTPException(400, "no overlapping return days")
 
-    wmap = dict(zip(req.tickers, weights))
-    port = sum(rets[c] * wmap.get(c, 0.0) for c in cols)
-    n = port.len()
-    total = float((1 + port).product() - 1)
-    mean = float(port.mean())
-    std = float(port.std() or 0.0)
-    ann_ret = (1 + total) ** (TRADING_DAYS / n) - 1 if n else 0.0
-    ann_vol = std * TRADING_DAYS ** 0.5
-    sharpe = (mean / std * TRADING_DAYS ** 0.5) if std else 0.0
-    curve = (1 + port).cum_prod()
-    max_dd = abs(float((curve / curve.cum_max() - 1).min()))
+    metrics = run_backtest(
+        rets, wide["date"].to_list(), req.tickers, weights,
+        rebalance=req.rebalance, cost_bps=req.cost_bps,
+    )
+    if not metrics:
+        raise HTTPException(400, "no overlapping return days")
 
     return {
         "tickers": req.tickers,
         "weights": weights,
         "start": str(req.start),
         "end": str(req.end),
-        "n_days": int(n),
-        "total_return": round(total, 6),
-        "ann_return": round(ann_ret, 6),
-        "ann_vol": round(ann_vol, 6),
-        "sharpe": round(sharpe, 4),
-        "max_drawdown": round(max_dd, 6),
+        "rebalance": req.rebalance,
+        **{k: (round(v, 4) if k == "sharpe" else round(v, 6))
+           for k, v in metrics.items()},
     }
 
 

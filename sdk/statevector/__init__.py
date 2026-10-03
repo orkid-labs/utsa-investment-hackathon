@@ -14,8 +14,16 @@ CLI:  svq panels | svq head <panel> | svq doctor | svq serve
 
 from .dataset import Dataset, parse_occ
 from .pit import asof_fundamentals, holdout_cutoff, holdout_mask, report_calendar
+from .backtest import (
+    OPTION_COST_BPS,
+    STOCK_COST_BPS,
+    run_backtest,
+)
 
 __all__ = [
+    "run_backtest",
+    "STOCK_COST_BPS",
+    "OPTION_COST_BPS",
     "Dataset",
     "parse_occ",
     "asof_fundamentals",

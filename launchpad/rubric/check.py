@@ -18,6 +18,8 @@ import sys
 import time
 import urllib.request
 from datetime import date
+
+from statevector.backtest import run_backtest
 from pathlib import Path
 
 RUBRIC_PATH = Path(__file__).parent / "rubric.yaml"
@@ -89,7 +91,7 @@ def leg_returns(ds, tickers: list[str], start: date, end: date,
                     rets = rets.with_columns(
                         (pl.col(c) + pl.col(f"{c}_dy").fill_null(0.0)).alias(c)
                     ).drop(f"{c}_dy")
-    return (rets.drop("date") if "date" in rets.columns else rets), cols
+    return rets, cols
 
 
 def _dividends(ds, stocks, start, end):
@@ -119,34 +121,14 @@ def _dividends(ds, stocks, start, end):
     )
 
 
-def portfolio_metrics(rets, cols, wmap) -> dict:
-    port = sum(rets[c] * wmap.get(c, 0.0) for c in cols)
-    n = port.len()
-    if n == 0:
-        return {}
-    total = float((1 + port).product() - 1)
-    mean = float(port.mean())
-    std = float(port.std() or 0.0)
-    ann_ret = (1 + total) ** (TRADING_DAYS / n) - 1
-    ann_vol = std * TRADING_DAYS**0.5
-    sharpe = (mean / std * TRADING_DAYS**0.5) if std else 0.0
-    curve = (1 + port).cum_prod()
-    max_dd = abs(float((curve / curve.cum_max() - 1).min()))
-    return {
-        "n_days": int(n),
-        "total_return": total,
-        "ann_return": ann_ret,
-        "ann_vol": ann_vol,
-        "sharpe": sharpe,
-        "max_drawdown": max_dd,
-    }
-
-
 def reference_backtest(ds, tickers, weights, start, end,
-                       dividends: bool = False) -> dict:
+                       dividends: bool = False, rebalance: str = "none",
+                       cost_bps=None) -> dict:
     rets, cols = leg_returns(ds, tickers, start, end, dividends=dividends)
-    wmap = dict(zip(tickers, weights))
-    return portfolio_metrics(rets, cols, wmap)
+    dates = rets["date"].to_list() if "date" in rets.columns else []
+    legs = rets.drop("date") if "date" in rets.columns else rets
+    return run_backtest(legs, dates, tickers, weights,
+                        rebalance=rebalance, cost_bps=cost_bps)
 
 
 def get_path(obj, path: str):
@@ -245,6 +227,8 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
             ds, b["tickers"], weights,
             date.fromisoformat(b["start"]), date.fromisoformat(b["end"]),
             dividends=bool(b.get("adjust_dividends")),
+            rebalance=b.get("rebalance", "none"),
+            cost_bps=b.get("cost_bps"),
         )
         if not ref:
             return fail(check, "reference produced no data — check request dates")
@@ -291,10 +275,14 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
             ds, b["tickers"],
             date.fromisoformat(b["start"]), date.fromisoformat(b["end"]),
         )
-        theirs = portfolio_metrics(rets, cols,
-                                   dict(zip(b["tickers"], weights)))
-        ew = portfolio_metrics(
-            rets, cols, {c: 1 / len(cols) for c in cols})
+        dates = rets["date"].to_list() if "date" in rets.columns else []
+        legs = rets.drop("date") if "date" in rets.columns else rets
+        theirs = run_backtest(legs, dates, b["tickers"], weights,
+                              rebalance=b.get("rebalance", "none"),
+                              cost_bps=b.get("cost_bps"))
+        ew = run_backtest(legs, dates, cols, [1 / len(cols)] * len(cols),
+                          rebalance=b.get("rebalance", "none"),
+                          cost_bps=b.get("cost_bps"))
         s_rep = body.get("sharpe")
         if not isinstance(s_rep, (int, float)):
             return fail(check, "sharpe missing/non-numeric")
