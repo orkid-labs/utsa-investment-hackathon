@@ -169,7 +169,7 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
         for _ in range(reps):
             t0 = time.monotonic()
             status, body = http(base, req["method"], req["path"],
-                                req.get("body"), timeout=30)
+                                req.get("body"), timeout=helpers.get("timeout", 30))
             worst = max(worst, (time.monotonic() - t0) * 1000)
     except Exception as e:
         return fail(check, f"request failed: {e}")
@@ -372,6 +372,7 @@ def main() -> int:
     ds = Dataset()
     helpers = {
         "latency_ms": [],
+        "timeout": int(rubric.get("timeout_seconds", 30)),
     }
     universe = set(ds.universe())
 
