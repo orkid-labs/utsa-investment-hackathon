@@ -457,6 +457,34 @@ class Dataset:
         )
         return lf.collect().to_pandas()
 
+    def splits(self, tickers=None, start=None, end=None):
+        """Stock split events from corporate_actions: (ticker, date, factor).
+
+        factor is the to/from ratio (10-for-1 -> 10.0). The `close`
+        column in stocks_daily is RAW — unadjusted for splits; an
+        ex-date shows as a phantom -50%/-75%/-90% return. Join these
+        events to adjust return series (see
+        ``backtest.apply_split_factors``).
+        """
+        try:
+            ca = self.structural("corporate_actions")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8, "date": pl.Date,
+                        "factor": pl.Float64})
+        df = pl.from_pandas(ca) if not isinstance(ca, pl.DataFrame) else ca
+        out = (df.filter(pl.col("kind") == "split")
+               .select("ticker",
+                       pl.col("ex_date").cast(pl.Date).alias("date"),
+                       pl.col("value").cast(pl.Float64).alias("factor")))
+        if tickers is not None:
+            out = out.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            out = out.filter(pl.col("date") >= _as_date(start))
+        if end is not None:
+            out = out.filter(pl.col("date") <= _as_date(end))
+        return out
+
     def guidance(self, ticker: str | None = None):
         """Structured company guidance events (Benzinga).
 

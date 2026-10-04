@@ -35,6 +35,37 @@ REBALANCE_CHOICES = ("none", "daily", "weekly", "monthly")
 CASH_TICKER = "CASHHOLDING"
 
 
+def apply_split_factors(rets, dates, splits):
+    """Correct split-day returns inside a wide return frame.
+
+    rets:   polars frame — one column per priced leg.
+    dates:  trading-day labels aligned to rets rows.
+    splits: polars frame (ticker, date, factor); factor = to/from ratio
+            (10-for-1 -> 10.0). On an ex-date the raw close ratio embeds
+            a phantom ~1/factor move; the true return is
+            (1 + r_raw) * factor - 1.
+
+    The stocks_daily `close` is raw/unadjusted — judged paths apply the
+    documented corporate_actions events so an in-window split cannot
+    corrupt a scored backtest.
+    """
+    import polars as pl
+    if splits is None or getattr(splits, "height", 0) == 0 \
+            or rets.height == 0:
+        return rets
+    dmap = {d: i for i, d in enumerate(dates)}
+    cols = list(rets.columns)
+    R = rets.to_numpy().copy()
+    for sp in splits.iter_rows(named=True):
+        i = dmap.get(sp["date"])
+        if i is None or sp["ticker"] not in cols:
+            continue
+        j = cols.index(sp["ticker"])
+        if np.isfinite(R[i, j]):
+            R[i, j] = (R[i, j] + 1.0) * sp["factor"] - 1.0
+    return pl.DataFrame(R, schema=cols)
+
+
 def leg_bps(ticker: str) -> float:
     if ticker == CASH_TICKER:
         return 0.0

@@ -37,7 +37,7 @@ from statevector import (
     parse_occ,  # noqa: F401
     run_backtest,
 )
-from statevector.backtest import REBALANCE_CHOICES
+from statevector.backtest import REBALANCE_CHOICES, apply_split_factors
 
 ds = Dataset()
 app = FastAPI(title="hackathon portfolio api", version="0.1.0")
@@ -154,6 +154,11 @@ def backtest(req: BacktestRequest) -> dict:
     ).fill_null(0.0)
     if rets.height == 0:
         raise HTTPException(400, "no overlapping return days")
+    # split-adjust so an ex-date inside the window is priced correctly —
+    # stocks_daily close is raw; corporate_actions carries the factors
+    rets = apply_split_factors(
+        rets, wide["date"].to_list(), ds.splits(req.tickers,
+                                               req.start, req.end))
 
     metrics = run_backtest(
         rets, wide["date"].to_list(), req.tickers, weights,

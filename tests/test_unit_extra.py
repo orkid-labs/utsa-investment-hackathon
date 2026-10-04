@@ -156,5 +156,49 @@ def test_cashholding_template_roundtrip(sv_fixture_root):
     assert out["cost_total"] < out2["cost_total"]
 
 
+# -- split adjustment -----------------------------------------------------------
+
+def test_apply_split_factors_corrects_ex_date():
+    """A 4-for-1 split prints a raw -75% return; the adjusted return is
+    the true residual move, not the phantom crash."""
+    import polars as pl
+    from statevector.backtest import apply_split_factors
+    dates = [date(2020, 8, 27), date(2020, 8, 28), date(2020, 8, 31),
+             date(2020, 9, 1)]
+    # raw closes 500 -> 125 on split day: raw ret -0.75; true move +3%
+    rets = pl.DataFrame({"AAPL": [0.01, 0.02, -0.742, 0.005],
+                         "MSFT": [0.01, -0.01, 0.005, 0.0]})
+    splits = pl.DataFrame({"ticker": ["AAPL"],
+                           "date": [date(2020, 8, 31)],
+                           "factor": [4.0]})
+    out = apply_split_factors(rets, dates, splits)
+    assert out["AAPL"][2] == pytest.approx((1 - 0.742) * 4.0 - 1.0)
+    assert out["AAPL"][2] == pytest.approx(0.032, abs=1e-9)
+    # untouched cells and other legs unchanged
+    assert out["AAPL"][1] == 0.02
+    assert out["MSFT"][2] == 0.005
+    # no splits -> identity
+    assert apply_split_factors(rets, dates, None) is rets
+
+
+def test_split_day_backtest_does_not_crash():
+    """A book holding a split name through ex-date earns the residual,
+    not -37.5% on a 50% weight."""
+    import polars as pl
+    from statevector.backtest import apply_split_factors, run_backtest
+    dates = [date(2020, 8, 28), date(2020, 8, 31), date(2020, 9, 1)]
+    rets = pl.DataFrame({"AAPL": [0.02, -0.742, 0.005],
+                         "MSFT": [-0.01, 0.005, 0.01]})
+    splits = pl.DataFrame({"ticker": ["AAPL"],
+                           "date": [date(2020, 8, 31)],
+                           "factor": [4.0]})
+    raw = run_backtest(rets, dates, ["AAPL", "MSFT"], [0.5, 0.5])
+    adj = run_backtest(apply_split_factors(rets, dates, splits),
+                       dates, ["AAPL", "MSFT"], [0.5, 0.5])
+    # raw path loses ~19% to the phantom; adjusted earns ~+2%
+    assert raw["total_return"] < -0.15
+    assert adj["total_return"] > 0.0
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-q"]))
