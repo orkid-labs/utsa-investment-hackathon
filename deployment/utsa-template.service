@@ -1,0 +1,20 @@
+[Unit]
+Description=UTSA hackathon reference app (template) — public demo + judges' scoring target
+After=network.target utsa-dataserver.service
+Wants=utsa-dataserver.service
+
+[Service]
+Type=simple
+User=orkidlabs
+Group=orkidlabs
+WorkingDirectory=/home/orkidlabs/workspace/utsa-hackathon/launchpad/template
+EnvironmentFile=/home/orkidlabs/.orkid/utsa-ref-app.env
+ExecStart=/home/orkidlabs/workspace/utsa-hackathon/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=10
+# read-only data client; no write surface beyond logs
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
