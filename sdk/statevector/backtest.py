@@ -30,8 +30,14 @@ STOCK_COST_BPS = 10.0
 OPTION_COST_BPS = 50.0
 REBALANCE_CHOICES = ("none", "daily", "weekly", "monthly")
 
+# Pseudo-ticker for the cash sleeve: zero return, zero transaction cost.
+# Weights still sum to ~1.0 — CASHHOLDING fills the residual inside the book.
+CASH_TICKER = "CASHHOLDING"
+
 
 def leg_bps(ticker: str) -> float:
+    if ticker == CASH_TICKER:
+        return 0.0
     return OPTION_COST_BPS if ticker.startswith("O:") else STOCK_COST_BPS
 
 
@@ -68,6 +74,9 @@ def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
 
     Returns the judged metric keys plus cost disclosure fields.
     """
+    if CASH_TICKER in tickers and CASH_TICKER not in rets.columns:
+        import polars as pl
+        rets = rets.with_columns(pl.lit(0.0).alias(CASH_TICKER))
     cols = [t for t in tickers if t in rets.columns]
     if rets.height == 0 or not cols:
         return {}

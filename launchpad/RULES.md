@@ -12,9 +12,10 @@ Your app holds positions expressed as weights per ticker-day:
   hedge available under long-only rules. Why: writing a put is
   short-volatility exposure — the mandate is a long-only book that may
   *buy* insurance, not sell it.
-- Weights are **nonnegative** and sum to **~1.0** (±1%). Cash is the
-  residual — you never need a "cash" pseudo-ticker. A book summing to
-  0.8 is 80% invested, 20% cash.
+- Weights are **nonnegative** and sum to **~1.0** (±1%). Hold a cash
+  sleeve with the **`CASHHOLDING`** pseudo-ticker: flat 0% return,
+  zero transaction cost — the way you de-risk or stage entries inside
+  the book. `[AAPL 0.6, CASHHOLDING 0.4]` is 60% invested, 40% cash.
 
 ## Tickers
 
@@ -58,6 +59,8 @@ authoritative and applies the same model to your reported metrics:
   (weights drift, entry+exit only); `"daily"`, `"weekly"`,
   `"monthly"` reset to target weights at that day's close and pay the
   turnover. Rebalancing more often is a real decision now.
+- `CASHHOLDING` legs trade free — moving into or out of the cash
+  sleeve costs 0 bps; the stock side of the trade still pays its rate.
 - `POST /backtest` accepts an optional `cost_bps` override (flat,
   per-leg) for sensitivity analysis — the reference recomputes with
   whatever you declare, so declaring a lower number moves the
