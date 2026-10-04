@@ -19,7 +19,7 @@ import time
 import urllib.request
 from datetime import date
 
-from statevector.backtest import run_backtest
+from statevector.backtest import CASH_TICKER, run_backtest
 from pathlib import Path
 
 RUBRIC_PATH = Path(__file__).parent / "rubric.yaml"
@@ -208,6 +208,8 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
             bad = []
             for h in target:
                 t = h.get("ticker", "")
+                if t == CASH_TICKER:
+                    continue
                 if is_option(t):
                     from statevector import parse_occ
                     try:

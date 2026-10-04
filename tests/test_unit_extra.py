@@ -120,5 +120,41 @@ def test_backtest_validation_rejects_shorting(sv_fixture_root):
         app.backtest(req)
 
 
+# -- CASHHOLDING sleeve --------------------------------------------------------
+
+def test_cashholding_zero_return_free_leg():
+    import polars as pl
+    from statevector.backtest import run_backtest, CASH_TICKER
+    rets = pl.DataFrame({"AAPL": [0.10, -0.05, 0.02, 0.03]})
+    dates = [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4),
+             date(2024, 1, 5)]
+    all_in = run_backtest(rets, dates, ["AAPL"], [1.0])
+    half = run_backtest(rets, dates, ["AAPL", CASH_TICKER], [0.5, 0.5])
+    assert all_in["n_days"] == half["n_days"] == 4
+    # cash dilutes the path but never trades: roughly half the cost drag
+    assert half["cost_total"] < all_in["cost_total"]
+    assert half["cost_total"] == pytest.approx(
+        all_in["cost_total"] / 2, abs=1e-4)
+    assert half["total_return"] != all_in["total_return"]
+    # turnover counts the cash sleeve (weight moved) even though it pays 0 bps
+    assert half["turnover"] == pytest.approx(all_in["turnover"])
+
+
+def test_cashholding_template_roundtrip(sv_fixture_root):
+    app = _load_template(sv_fixture_root)
+    req = app.BacktestRequest(
+        tickers=["AAPL", "CASHHOLDING"], weights=[0.5, 0.5],
+        start=date(2020, 1, 2), end=date(2020, 6, 30))
+    out = app.backtest(req)
+    assert out["n_days"] > 60
+    assert "cost_total" in out and "turnover" in out
+    # 50% cash book should cost ~half of the all-in round trip
+    req2 = app.BacktestRequest(
+        tickers=["AAPL"], weights=[1.0],
+        start=date(2020, 1, 2), end=date(2020, 6, 30))
+    out2 = app.backtest(req2)
+    assert out["cost_total"] < out2["cost_total"]
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-q"]))
