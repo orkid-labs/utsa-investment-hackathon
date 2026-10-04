@@ -1,0 +1,7 @@
+[Unit]
+Description=UTSA hackathon surface health probe (dataserver + template + funnel)
+
+[Service]
+Type=oneshot
+User=orkidlabs
+ExecStart=/home/orkidlabs/bin/utsa-health
