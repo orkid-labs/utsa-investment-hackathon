@@ -18,11 +18,15 @@ from .backtest import (
     OPTION_COST_BPS,
     STOCK_COST_BPS,
     apply_split_factors,
+    run_backtest_series,
+    validate_decision_series,
     run_backtest,
 )
 
 __all__ = [
     "run_backtest",
+    "run_backtest_series",
+    "validate_decision_series",
     "apply_split_factors",
     "STOCK_COST_BPS",
     "OPTION_COST_BPS",

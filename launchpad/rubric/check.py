@@ -20,7 +20,8 @@ import urllib.request
 from datetime import date
 
 from statevector.backtest import (
-    CASH_TICKER, apply_split_factors, run_backtest)
+    CASH_TICKER, apply_split_factors, run_backtest,
+    run_backtest_series, validate_decision_series)
 from pathlib import Path
 
 RUBRIC_PATH = Path(__file__).parent / "rubric.yaml"
@@ -305,6 +306,48 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
             return fail(check,
                         f"sharpe {s_rep} < {exp['sharpe_floor']}x equal-weight "
                         f"({ew['sharpe']:.4f})")
+
+    if exp.get("decision_series"):
+        # POST /decisions {start,end} -> {"series": [records]} or bare list.
+        # Format: launchpad/rubric/decision-series.md. The judge recomputes
+        # the whole curve — reported metrics are advisory only.
+        series = body.get("series") if isinstance(body, dict) else body
+        decisions, errors = validate_decision_series(series)
+        if errors:
+            return fail(check, "invalid series: " + "; ".join(errors[:4]))
+        b = req.get("body") or {}
+        tickers = sorted({t for d in decisions for t in (d["weights"] or {})})
+        rets, cols = leg_returns(
+            ds, tickers,
+            date.fromisoformat(b["start"]), date.fromisoformat(b["end"]))
+        dts = rets["date"].to_list() if "date" in rets.columns else []
+        legs = rets.drop("date") if "date" in rets.columns else rets
+        m = run_backtest_series(legs, dts, decisions,
+                                cost_bps=b.get("cost_bps"))
+        if not m:
+            return fail(check, "no priced legs across series window")
+        rep = body.get("metrics") if isinstance(body, dict) else None
+        tol = exp.get("tolerance")
+        if isinstance(rep, dict) and tol:
+            for k in ("total_return", "sharpe", "max_drawdown"):
+                rv = rep.get(k)
+                if isinstance(rv, (int, float)) and \
+                        abs(rv - m[k]) > abs(m[k]) * tol + 1e-6:
+                    return fail(check,
+                                f"reported {k}={rv} vs recomputed {m[k]:.4f}")
+        if "return_min" in exp and m["total_return"] < exp["return_min"]:
+            return fail(check,
+                        f"series return {m['total_return']:.4f} < "
+                        f"{exp['return_min']}")
+        if "sharpe_min" in exp and m["sharpe"] < exp["sharpe_min"]:
+            return fail(check,
+                        f"series sharpe {m['sharpe']:.4f} < "
+                        f"{exp['sharpe_min']}")
+        return {"id": check["id"], "earned": pts, "max": pts,
+                "note": f"{m['n_decisions']} decisions: ret "
+                        f"{m['total_return']:+.1%} sharpe {m['sharpe']:.2f} "
+                        f"maxdd {m['max_drawdown']:.1%} turnover "
+                        f"{m['turnover']:.1f}x"}
 
     if "all_items_field_lte" in exp and isinstance(target, list):
         spec = exp["all_items_field_lte"]
