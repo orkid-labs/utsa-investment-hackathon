@@ -17,11 +17,13 @@ from .pit import asof_fundamentals, holdout_cutoff, holdout_mask, report_calenda
 from .backtest import (
     OPTION_COST_BPS,
     STOCK_COST_BPS,
+    apply_split_factors,
     run_backtest,
 )
 
 __all__ = [
     "run_backtest",
+    "apply_split_factors",
     "STOCK_COST_BPS",
     "OPTION_COST_BPS",
     "Dataset",

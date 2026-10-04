@@ -19,7 +19,8 @@ import time
 import urllib.request
 from datetime import date
 
-from statevector.backtest import CASH_TICKER, run_backtest
+from statevector.backtest import (
+    CASH_TICKER, apply_split_factors, run_backtest)
 from pathlib import Path
 
 RUBRIC_PATH = Path(__file__).parent / "rubric.yaml"
@@ -72,6 +73,14 @@ def leg_returns(ds, tickers: list[str], start: date, end: date,
     cols = [c for c in wide.columns if c != "date"]
     exprs = [pl.col(c) / pl.col(c).shift(1) - 1.0 for c in cols]
     rets = wide.select(["date", *exprs]).fill_null(0.0)
+
+    # judged path must be split-correct: a phantom ex-date move inside
+    # the window would corrupt every book holding that leg
+    sp = ds.splits(stocks, start, end)
+    if sp.height:
+        legs = apply_split_factors(
+            rets.drop("date"), rets["date"].to_list(), sp)
+        rets = pl.concat([rets.select("date"), legs], how="horizontal")
 
     if dividends:
         divs = _dividends(ds, stocks, start, end)
