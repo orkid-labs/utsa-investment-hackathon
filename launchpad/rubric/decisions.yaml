@@ -1,0 +1,22 @@
+# decisions.yaml — v2 rubric for decision-series submissions
+# (launchpad/rubric/decision-series.md). Opt-in: an app without
+# POST /decisions scores 0 here; rubric.yaml scoring is unaffected.
+# The judge recomputes the full series curve — transitions at each
+# execution_time, drift between, mandate cost model, split-adjusted.
+
+version: "1.0"
+timeout_seconds: 60
+
+checks:
+  - id: decision_series
+    points: 100
+    desc: "POST /decisions returns a valid chronological decision series; judge replays it through the window"
+    request:
+      method: POST
+      path: /decisions
+      body: { start: "2026-08-24", end: "2026-09-21" }
+    expect:
+      status: 200
+      decision_series: true
+      tolerance: 0.05      # if the response carries top-level "metrics",
+                           # each reported key must agree with recompute

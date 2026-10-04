@@ -200,5 +200,132 @@ def test_split_day_backtest_does_not_crash():
     assert adj["total_return"] > 0.0
 
 
+
+# -- decision-series format: validation + event-driven engine ----------------
+
+def _series_frame():
+    import polars as pl
+    """5 trading days: A +10%/day, B flat."""
+    days = [date(2026, 9, d) for d in (1, 2, 3, 4, 7)]
+    return pl.DataFrame({"A": [0.10] * 5, "B": [0.0] * 5}), days
+
+
+def _rec(i, cutoff, decide, execute, holds, action="rebalance"):
+    return {
+        "schema_version": "1.0",
+        "team_id": "t",
+        "model_id": "m",
+        "decision_id": i,
+        "information_cutoff": cutoff,
+        "decision_time": decide,
+        "execution_time": execute,
+        "action": action,
+        "target_holdings": holds,
+    }
+
+
+def test_decision_series_validates_good_series():
+    from statevector.backtest import validate_decision_series
+    recs = [
+        _rec(1, "2026-08-31T16:00:00-04:00", "2026-08-31T16:15:00-04:00",
+             "2026-09-01T09:30:00-04:00", [{"ticker": "A", "weight": 1.0}]
+             if False else [{"ticker": "A", "weight": 0.2}] * 1),
+    ]
+    # 1.0 weight exceeds the 20% cap — use a 5-name book instead
+    recs[0]["target_holdings"] = [{"ticker": t, "weight": 0.2}
+                                  for t in "ABCDE"]
+    decisions, errors = validate_decision_series(recs)
+    assert errors == [] and len(decisions) == 1
+    assert decisions[0]["date"] == date(2026, 9, 1)
+    assert decisions[0]["weights"]["A"] == 0.2
+
+
+def test_decision_series_rejects_bad_records():
+    from statevector.backtest import validate_decision_series
+    base = dict(cutoff="2026-08-31T16:00:00-04:00",
+                decide="2026-08-31T16:15:00-04:00",
+                execute="2026-09-01T09:30:00-04:00")
+    legs = [{"ticker": t, "weight": 0.2} for t in "ABCDE"]
+
+    # decision_id not increasing
+    _, e = validate_decision_series(
+        [_rec(2, **base, holds=legs), _rec(1, **base, holds=legs)])
+    assert any("decision_id" in x for x in e)
+
+    # lookahead: decision before information_cutoff
+    _, e = validate_decision_series([_rec(
+        1, "2026-08-31T16:00:00-04:00", "2026-08-31T15:00:00-04:00",
+        "2026-09-01T09:30:00-04:00", legs)])
+    assert any("information_cutoff" in x for x in e)
+
+    # instant fill: execution <= decision
+    _, e = validate_decision_series([_rec(
+        1, "2026-08-31T16:00:00-04:00", "2026-09-01T09:30:00-04:00",
+        "2026-09-01T09:30:00-04:00", legs)])
+    assert any("execution_time" in x for x in e)
+
+    # sum != 1
+    _, e = validate_decision_series([_rec(
+        1, **base, holds=[{"ticker": "A", "weight": 0.2}])])
+    assert any("sum" in x for x in e)
+
+    # >20% single name
+    _, e = validate_decision_series([_rec(
+        1, **base, holds=[{"ticker": t, "weight": w}
+                          for t, w in (("A", 0.4), ("B", 0.2),
+                                       ("C", 0.2), ("D", 0.1), ("E", 0.1))])])
+    assert any("cap" in x for x in e)
+
+    # duplicate execution dates
+    _, e = validate_decision_series(
+        [_rec(1, **base, holds=legs), _rec(2, **base, holds=legs)])
+    assert any("duplicate" in x for x in e)
+
+
+def test_decision_series_matches_static_backtest():
+    """Golden: a 1-decision series executed at window start is exactly a
+    buy-and-hold run_backtest on the same book."""
+    from statevector.backtest import run_backtest, run_backtest_series
+    rets, days = _series_frame()
+    w = {"A": 0.6, "B": 0.4} if False else {"A": 1.0}
+    static = run_backtest(rets, days, ["A"], [1.0])
+    series = run_backtest_series(
+        rets, days, [{"date": days[0], "weights": {"A": 1.0}}])
+    for k in ("total_return", "sharpe", "max_drawdown", "turnover",
+              "cost_total"):
+        assert abs(static[k] - series[k]) < 1e-12, (k, static[k], series[k])
+
+
+def test_decision_series_transition_math():
+    """All-A -> all-B switch mid-window: turnover 1+2+1, cost 10bp per unit."""
+    from statevector.backtest import run_backtest_series
+    rets, days = _series_frame()
+    m = run_backtest_series(rets, days, [
+        {"date": days[0], "weights": {"A": 1.0}},
+        {"date": days[2], "weights": {"B": 1.0}},
+    ])
+    # entry 1.0 |A|, A->B switch 2.0, exit 1.0 |B|
+    assert abs(m["turnover"] - 4.0) < 1e-9
+    # net days: +0.1-0.001, +0.1, +0.1-0.002, 0, 0-0.001
+    want = ((1.099) * (1.10) * (1.098) * 1.0 * (0.999)) - 1.0
+    assert abs(m["total_return"] - want) < 1e-9
+    assert m["n_decisions"] == 2
+    # gross (cost-free) curve earns three +10% days on A then flat B
+    assert abs(m["cost_total"] - ((1.10 ** 3 - 1.0) - want)) < 1e-9
+
+
+def test_decision_series_weekend_exec_clamps_forward():
+    """An execution_time landing off-calendar executes the next trading day."""
+    from statevector.backtest import run_backtest_series
+    rets, days = _series_frame()   # 9/4 is Fri, 9/5-6 weekend, 9/7 Mon
+    m = run_backtest_series(rets, days, [
+        {"date": days[0], "weights": {"A": 1.0}},
+        {"date": date(2026, 9, 5), "weights": {"B": 1.0}},  # Saturday
+    ])
+    # switch lands on Monday d4: A earns day-4's +10% on drifted weights,
+    # then pays transition (0.002) + liquidation (0.001) -> port4 = 0.097
+    want = (1.099) * (1.10) ** 3 * (1.097) - 1.0
+    assert abs(m["total_return"] - want) < 1e-9
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-q"]))

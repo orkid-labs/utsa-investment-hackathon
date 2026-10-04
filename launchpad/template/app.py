@@ -22,6 +22,8 @@ Judged endpoints (keep these paths + response shapes):
     POST /backtest
     GET  /screen
     GET  /asof
+    POST /decisions    # v2 opt-in: chronological target-portfolio series
+                       # (launchpad/rubric/decision-series.md)
 """
 
 from __future__ import annotations

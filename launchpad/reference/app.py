@@ -245,11 +245,12 @@ def _vol_of(cand: pl.DataFrame, t: str) -> float:
 _book_cache: dict = {}
 
 
-def build_book() -> dict:
+def build_book(cut: date | None = None) -> dict:
     """orkid_qmv: canonical-feature composite, split-clean, event-aware,
-    inverse-vol sized with name/sector caps. Features end at the sealed
-    holdout cutoff — nothing in the book touches eval-window data."""
-    cut = _cutoff()
+    inverse-vol sized with name/sector caps. Features end at  — the
+    sealed holdout cutoff by default, or an earlier decision-time cutoff
+    when replayed by /decisions (per-decision PIT)."""
+    cut = cut or _cutoff()
     if cut in _book_cache:
         return _book_cache[cut]
 
@@ -447,3 +448,69 @@ def asof(ticker: str, on: date):
         return clean(ds.fundamentals(ticker, asof=str(on)).to_dict("records"))
     except Exception as e:
         raise HTTPException(400, str(e))
+
+# ------------------------------------------------------------ decisions ----
+
+class DecisionsRequest(BaseModel):
+    """v2 submission format — see launchpad/rubric/decision-series.md."""
+    start: date
+    end: date
+    every_days: int = Field(5, ge=1, le=25)
+    team_id: str = "orkid-reference"
+    model_id: str = "orkid_qmv-series"
+
+
+def _trading_days(start: date, end: date) -> list[date]:
+    """Index trading days — the canonical session calendar."""
+    df = (
+        ds._scan("index_daily")
+        .filter((pl.col("date") >= start) & (pl.col("date") <= end))
+        .select("date").unique().sort("date").collect()
+    )
+    return [d if isinstance(d, date) else d.date() for d in df["date"]]
+
+
+@app.post("/decisions")
+def decisions(req: DecisionsRequest) -> dict:
+    """Chronological target-portfolio series — the frozen model replayed
+    step-by-step through the window.
+
+    Each decision: information_cutoff = that day's close (features may only
+    see data <= cutoff — build_book(cut) enforces it), decision_time =
+    close+15m, execution_time = next trading day's open. An opener decision
+    made at the close before `start` establishes the book entering the
+    window.
+    """
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    days = _trading_days(req.start - timedelta(days=10), req.end)
+    in_win = [d for d in days if req.start <= d <= req.end]
+    if not in_win:
+        raise HTTPException(400, "no trading days in window")
+
+    # decision grid: the close before start (opener), then every_days-th
+    # trading day inside the window
+    pre = [d for d in days if d < req.start]
+    grid = ([pre[-1]] if pre else []) + in_win[:: req.every_days]
+    day_idx = {d: i for i, d in enumerate(days)}
+
+    series = []
+    for i, d in enumerate(grid):
+        nxt = days[day_idx[d] + 1] if day_idx[d] + 1 < len(days) else None
+        if nxt is None or nxt > req.end:
+            continue  # nothing executable left in the window
+        book = build_book(cut=d)
+        series.append({
+            "schema_version": "1.0",
+            "team_id": req.team_id,
+            "model_id": req.model_id,
+            "decision_id": i + 1,
+            "information_cutoff": f"{d}T16:00:00-04:00",
+            "decision_time": f"{d}T16:15:00-04:00",
+            "execution_time": f"{nxt}T09:30:00-04:00",
+            "action": "rebalance",
+            "target_holdings": book["holdings"],
+        })
+    return {"series": series, "model_id": req.model_id,
+            "note": "per-decision PIT: each book built only from data "
+                    "<= its information_cutoff"}
