@@ -329,3 +329,48 @@ def test_decision_series_weekend_exec_clamps_forward():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-x", "-q"]))
+
+
+# -- sectors(): reduced reference_tickers schema ----------------------------
+
+def test_sectors_tolerates_reduced_schema(sv_fixture_root):
+    """The shipped build has no sic_description / market_cap —
+    sectors() must return what exists rather than raising
+    ColumnNotFoundError (contestants hit this)."""
+    from statevector import Dataset
+    df = Dataset(sv_fixture_root).sectors()
+    assert "ticker" in df.columns
+    assert "sic_description" not in df.columns
+    assert len(df) == 3
+
+
+# -- holdout_cutoff / _last_trading_day: stems, not a full scan -------------
+
+def test_last_trading_day_falls_back_to_scan(sv_fixture_root):
+    """Single-file canonical build: no partitioned dir -> trading_days()."""
+    from statevector import Dataset
+    ds = Dataset(sv_fixture_root)
+    assert ds._last_trading_day() == max(ds.trading_days())
+
+
+def test_last_trading_day_uses_partition_stems(tmp_path):
+    """Stems are parsed without scanning file contents."""
+    from statevector import Dataset
+    part = tmp_path / "data" / "raw" / "massive" / "stocks_daily"
+    part.mkdir(parents=True)
+    for d in ("2020-01-02", "2020-06-30", "2020-03-16"):
+        (part / f"{d}.parquet").touch()
+    ds = Dataset(tmp_path)
+    assert ds._last_trading_day() == date(2020, 6, 30)
+
+
+def test_last_trading_day_uses_remote_manifest(sv_fixture_root):
+    """Remote mode reads index.json file stems — no HTTP."""
+    from statevector import Dataset
+    ds = Dataset(sv_fixture_root)
+    ds.base = "https://example.invalid"
+    ds._index = {"panels": {"stocks_daily": {"files": [
+        "raw/massive/stocks_daily/2021-03-05.parquet",
+        "raw/massive/stocks_daily/2020-11-25.parquet",
+    ]}}}
+    assert ds._last_trading_day() == date(2021, 3, 5)
