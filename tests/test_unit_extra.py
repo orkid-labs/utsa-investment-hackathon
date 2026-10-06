@@ -368,6 +368,43 @@ def test_sectors_joins_ticker_details_panel(sv_fixture_root):
         ["Electronic Computers"] * 3
 
 
+
+# -- splits(): scalar-string ticker arg -------------------------------------
+
+def test_splits_scalar_ticker_arg(sv_fixture_root):
+    """ds.splits("AAPL") must not explode the str into chars —
+    is_in("AAPL") used to silently match every 1-char ticker (A, P, L)."""
+    import polars as pl
+    from statevector import Dataset
+    pl.DataFrame([
+        {"ticker": "A", "kind": "split", "ex_date": date(2020, 8, 31),
+         "value": 2.0},
+        {"ticker": "AAPL", "kind": "split", "ex_date": date(2020, 8, 31),
+         "value": 4.0},
+        {"ticker": "P", "kind": "split", "ex_date": date(2020, 9, 1),
+         "value": 1.5},
+    ]).write_parquet(
+        sv_fixture_root / "data/structural/corporate_actions.parquet")
+    got = Dataset(sv_fixture_root).splits("AAPL")
+    assert got["ticker"].to_list() == ["AAPL"]
+    assert got["factor"].to_list() == [4.0]
+
+
+def test_panels_catalogs_ticker_details(sv_fixture_root):
+    """ticker_details must appear in the panels() catalog, not just the
+    manifest — STRUCTURAL_TABLES constant coverage."""
+    import polars as pl
+    from statevector import Dataset
+    pl.DataFrame([{
+        "ticker": t, "cik": "0000000001", "sic_code": "3571",
+        "sic_description": "Electronic Computers",
+        "sector": "industrials_manufacturing",
+        "market_cap": 3000000000000.0,
+        "fetched_utc": "2026-10-06T00:00:00Z",
+    } for t in ["AAPL", "MSFT", "NVDA"]]).write_parquet(
+        sv_fixture_root / "data/structural/ticker_details.parquet")
+    assert Dataset(sv_fixture_root).panels()["ticker_details"] == 3
+
 # -- holdout_cutoff / _last_trading_day: stems, not a full scan -------------
 
 def test_last_trading_day_falls_back_to_scan(sv_fixture_root):

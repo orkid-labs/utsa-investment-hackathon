@@ -96,6 +96,7 @@ STRUCTURAL_TABLES = {
     "universe_membership",
     "corporate_actions",
     "report_calendar_us",
+    "ticker_details",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -501,6 +502,8 @@ class Dataset:
                .select("ticker",
                        pl.col("ex_date").cast(pl.Date).alias("date"),
                        pl.col("value").cast(pl.Float64).alias("factor")))
+        if isinstance(tickers, str):
+            tickers = [tickers]
         if tickers is not None:
             out = out.filter(pl.col("ticker").is_in(list(tickers)))
         if start is not None:
