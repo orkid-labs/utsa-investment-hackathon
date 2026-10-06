@@ -4,7 +4,7 @@ and edge paths the data tests don't reach.
 """
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -291,9 +291,11 @@ def test_decision_series_matches_static_backtest():
     static = run_backtest(rets, days, ["A"], [1.0])
     series = run_backtest_series(
         rets, days, [{"date": days[0], "weights": {"A": 1.0}}])
-    for k in ("total_return", "sharpe", "max_drawdown", "turnover",
-              "cost_total"):
-        assert abs(static[k] - series[k]) < 1e-12, (k, static[k], series[k])
+    for k in static:
+        if isinstance(static[k], (int, float)):
+            assert abs(static[k] - series[k]) < 1e-12, (k, static[k], series[k])
+        else:
+            assert static[k] == series[k], k
 
 
 def test_decision_series_transition_math():
@@ -393,3 +395,48 @@ def test_nested_crypto_tolerates_hetero_schema(tmp_path):
     df = Dataset(tmp_path)._scan("crypto_minute").collect()
     assert set(df["ticker"].to_list()) == {"X:AAUSD", "X:BBUSD"}
     assert "close" in df.columns
+
+
+# -- annualization sanity bounds (GIPS-style suppression) -------------------
+
+def test_annualization_suppressed_on_short_window():
+    """Sub-MIN_ANN_DAYS windows emit period stats only — annualized
+    fields are None so a 5-day return can't masquerade as 10x/yr."""
+    from statevector.backtest import run_backtest
+    rets, days = _series_frame()
+    m = run_backtest(rets, days, ["A"], [1.0])
+    assert m["n_days"] == 5
+    assert m["annualized"] is False
+    for k in ("ann_return", "ann_vol", "sharpe", "sortino", "calmar"):
+        assert m[k] is None, k
+    # period stats still reported
+    assert m["total_return"] > 0
+    assert 0.0 <= m["hit_rate"] <= 1.0
+    assert m["exposure"] == pytest.approx(1.0)
+
+
+def test_annualization_emitted_on_long_window():
+    """>= MIN_ANN_DAYS windows emit the full institutional metric block."""
+    import polars as pl
+    from statevector.backtest import run_backtest
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(100)]
+    rets = pl.DataFrame({"A": [0.001] * 100})
+    m = run_backtest(rets, days, ["A"], [1.0])
+    assert m["annualized"] is True
+    assert m["ann_return"] is not None and m["ann_return"] > 0
+    assert m["sharpe"] is not None
+    assert {"sortino", "calmar", "hit_rate", "skew", "var_95",
+            "cvar_95", "exposure"} <= set(m)
+    assert m["exposure"] == pytest.approx(1.0)
+
+
+def test_ann_return_bounded_on_total_loss():
+    """A book that loses >=100% can't produce complex/NaN annualization."""
+    import polars as pl
+    from statevector.backtest import run_backtest
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(100)]
+    rets = pl.DataFrame({"A": [-1.0] + [0.0] * 99})
+    m = run_backtest(rets, days, ["A"], [1.0], cost_bps=10)
+    assert isinstance(m["ann_return"], float)
+    assert m["ann_return"] <= -1.0
+    assert m["total_return"] <= -1.0

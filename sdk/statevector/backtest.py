@@ -26,6 +26,11 @@ from __future__ import annotations
 import numpy as np
 
 TRADING_DAYS = 252
+
+# GIPS-style sanity bound: annualized statistics on windows shorter
+# than ~1 quarter are numerically meaningless (a 20-day return
+# compounds into absurdity). Under the bound the fields are None.
+MIN_ANN_DAYS = 63
 STOCK_COST_BPS = 10.0
 OPTION_COST_BPS = 50.0
 REBALANCE_CHOICES = ("none", "daily", "weekly", "monthly")
@@ -91,6 +96,56 @@ def _rebalance_mask(dates: list, freq: str) -> np.ndarray:
     return mask
 
 
+def _perf_metrics(port, gross, turnover, invested, extra=None):
+    """Shared performance block for run_backtest / run_backtest_series.
+
+    Annualized statistics (ann_return, ann_vol, sharpe, sortino, calmar)
+    are suppressed — None — on windows shorter than MIN_ANN_DAYS. Period
+    stats (total_return, hit_rate, skew, var/cvar, drawdown, turnover,
+    cost_total, exposure) are always reported.
+    """
+    n = len(port)
+    total = float((1.0 + port).prod() - 1.0)
+    gross_total = float((1.0 + gross).prod() - 1.0)
+    mean = float(port.mean())
+    std = float(port.std()) if n > 1 else 0.0
+    curve = np.cumprod(1.0 + port)
+    max_dd = abs(float((curve / np.maximum.accumulate(curve) - 1.0).min()))
+    down_std = float(np.sqrt((np.minimum(port, 0.0) ** 2).mean()))
+    var95 = float(np.percentile(port, 5)) if n else 0.0
+    tail = port[port <= var95]
+    m = {
+        "n_days": int(n),
+        "total_return": total,
+        "ann_return": None,
+        "ann_vol": None,
+        "sharpe": None,
+        "sortino": None,
+        "calmar": None,
+        "annualized": n >= MIN_ANN_DAYS,
+        "hit_rate": float((port > 0).mean()) if n else 0.0,
+        "skew": float(((port - mean) ** 3).mean() / std ** 3)
+                if std else 0.0,
+        "var_95": abs(var95),
+        "cvar_95": abs(float(tail.mean())) if tail.size else 0.0,
+        "exposure": float(invested.mean()) if n else 0.0,
+        "max_drawdown": max_dd,
+        "turnover": float(turnover.sum()),
+        "cost_total": gross_total - total,
+    }
+    if n >= MIN_ANN_DAYS:
+        m["ann_return"] = ((1.0 + total) ** (TRADING_DAYS / n) - 1.0
+                        if 1.0 + total > 0 else -1.0)
+        m["ann_vol"] = std * TRADING_DAYS ** 0.5
+        m["sharpe"] = mean / std * TRADING_DAYS ** 0.5 if std else 0.0
+        m["sortino"] = (mean / down_std * TRADING_DAYS ** 0.5
+                        if down_std else 0.0)
+        m["calmar"] = (m["ann_return"] / max_dd) if max_dd else 0.0
+    if extra:
+        m.update(extra)
+    return m
+
+
 def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
                  *, rebalance: str = "none",
                  cost_bps: float | None = None,
@@ -124,6 +179,7 @@ def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
     w = w_target.copy()
     port = np.empty(n)
     turnover = np.zeros(n)
+    invested = np.zeros(n)
     for t in range(n):
         r_t = float(w @ R[t])
         cost = 0.0
@@ -146,6 +202,7 @@ def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
             cost += float((w_post * bps).sum())
             turnover[t] += float(w_post.sum())
         port[t] = r_t - cost
+        invested[t] = float(np.abs(w).sum())
 
     gross = np.empty(n)  # recompute gross curve for cost_drag
     wg = w_target.copy()
@@ -157,27 +214,7 @@ def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
         if rebal[t]:
             wg = w_target.copy()
 
-    total = float((1.0 + port).prod() - 1.0)
-    gross_total = float((1.0 + gross).prod() - 1.0)
-    mean = float(port.mean())
-    std = float(port.std()) if n > 1 else 0.0
-    ann_ret = (1.0 + total) ** (TRADING_DAYS / n) - 1.0 if n else 0.0
-    ann_vol = std * TRADING_DAYS ** 0.5
-    sharpe = (mean / std * TRADING_DAYS ** 0.5) if std else 0.0
-    curve = np.cumprod(1.0 + port)
-    max_dd = abs(float((curve / np.maximum.accumulate(curve) - 1.0).min()))
-
-    return {
-        "n_days": int(n),
-        "total_return": total,
-        "ann_return": ann_ret,
-        "ann_vol": ann_vol,
-        "sharpe": sharpe,
-        "max_drawdown": max_dd,
-        "turnover": float(turnover.sum()),
-        "cost_total": gross_total - total,
-    }
-
+    return _perf_metrics(port, gross, turnover, invested)
 
 # ---------------------------------------------------------------------------
 # Decision-series backtests (launchpad/rubric/decision-series.md)
@@ -351,6 +388,7 @@ def run_backtest_series(rets, dates: list, decisions: list[dict],
     w = np.zeros(len(cols))          # held weights (drift), starts all-cash
     port = np.empty(n)
     turnover = np.zeros(n)
+    invested = np.zeros(n)
     for t in range(n):
         cost = 0.0
         if t == 0 and 0 in by_day:
@@ -378,6 +416,7 @@ def run_backtest_series(rets, dates: list, decisions: list[dict],
             cost += float((w_post * bps).sum())
             turnover[t] += float(w_post.sum())
         port[t] = r_t - cost
+        invested[t] = float(np.abs(w).sum())
 
     # gross curve for cost_drag: same transitions, no costs
     gross = np.empty(n)
@@ -396,24 +435,5 @@ def run_backtest_series(rets, dates: list, decisions: list[dict],
                 if tv is not None:
                     wg = tv.copy()
 
-    total = float((1.0 + port).prod() - 1.0)
-    gross_total = float((1.0 + gross).prod() - 1.0)
-    mean = float(port.mean())
-    std = float(port.std()) if n > 1 else 0.0
-    ann_ret = (1.0 + total) ** (TRADING_DAYS / n) - 1.0 if n else 0.0
-    ann_vol = std * TRADING_DAYS ** 0.5
-    sharpe = (mean / std * TRADING_DAYS ** 0.5) if std else 0.0
-    curve = np.cumprod(1.0 + port)
-    max_dd = abs(float((curve / np.maximum.accumulate(curve) - 1.0).min()))
-
-    return {
-        "n_days": int(n),
-        "n_decisions": int(len(decisions)),
-        "total_return": total,
-        "ann_return": ann_ret,
-        "ann_vol": ann_vol,
-        "sharpe": sharpe,
-        "max_drawdown": max_dd,
-        "turnover": float(turnover.sum()),
-        "cost_total": gross_total - total,
-    }
+    return _perf_metrics(port, gross, turnover, invested,
+                             extra={"n_decisions": int(len(decisions))})
