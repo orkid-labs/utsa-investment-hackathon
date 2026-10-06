@@ -453,21 +453,22 @@ class Dataset:
     def sectors(self):
         """ticker -> name, SIC classification, sector, exchange, market cap.
 
-        Joins reference_tickers with the ticker_sectors structural panel
-        (SEC EDGAR SIC — see tools/fetch_sectors.py). Columns absent from
+        Joins reference_tickers with the ticker_details structural panel
+        (Massive ticker-details enrichment panel). Columns absent from
         either source are omitted rather than raising — older builds ship
         a reduced schema (no SIC or market_cap), so callers must tolerate
         missing fields.
 
         PIT caveat: SIC/sector are CURRENT classifications (EDGAR serves
-        no historical membership). fetched_utc in ticker_sectors is the
+        no historical membership). fetched_utc in ticker_details is the
         provenance stamp; do not treat sector as point-in-time.
         """
         lf = self._scan("reference_tickers")
         try:
-            sec = self._scan("ticker_sectors")
+            sec = self._scan("ticker_details")
             sec_cols = [c for c in ("ticker", "sic_code",
-                                    "sic_description", "sector")
+                                    "sic_description", "sector",
+                                    "market_cap")
                         if c in sec.collect_schema().names()]
             if "ticker" in sec_cols:
                 lf = lf.join(sec.select(sec_cols),

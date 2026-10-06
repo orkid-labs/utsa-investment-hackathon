@@ -91,8 +91,8 @@ runs through 2026-11-03.
 
 Changes since the contest:
 
-- `Dataset.sectors()` left-joins the `ticker_sectors` structural
-  panel (SEC EDGAR SIC, current classification) and still tolerates
+- `Dataset.sectors()` left-joins the `ticker_details` structural
+  panel (Massive ticker details, current snapshot) and still tolerates
   reduced `reference_tickers` schemas — previously raised
   `ColumnNotFoundError`.
 - `Dataset.holdout_cutoff()` resolves the last trading day from
