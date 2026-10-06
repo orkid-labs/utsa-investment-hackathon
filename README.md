@@ -83,3 +83,23 @@ ds.options_greeks("TSLA", on="2024-06-21")    # contract-level Greeks
 ```bash
 python launchpad/rubric/check.py --base-url http://localhost:8000
 ```
+
+## Post-contest updates
+
+The contest closed 2026-10-04. Dataset access for participating teams
+runs through 2026-11-03.
+
+Changes since the contest:
+
+- `Dataset.sectors()` tolerates the shipped `reference_tickers` schema
+  (no `sic_description`/`market_cap`) — previously raised
+  `ColumnNotFoundError`.
+- `Dataset.holdout_cutoff()` resolves the last trading day from
+  partition file stems instead of scanning all day-files (~85s → ~20ms
+  remote).
+- Remote `crypto_minute`/`crypto_hourly` scans tolerate heterogeneous
+  pair schemas; `data/index.json` regenerated (the manifest had been
+  stale since 2026-09-23 and underserved the nested crypto tape).
+- The adaptive submission format is now documented:
+  `launchpad/rubric/decision-series.md`. Opt-in scoring via
+  `--rubric launchpad/rubric/decisions.yaml`.
