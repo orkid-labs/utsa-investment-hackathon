@@ -73,4 +73,16 @@ def sv_fixture_root(tmp_path_factory) -> Path:
     (root / "data/structural/universe_us.txt").write_text(
         "\n".join(TICKERS) + "\n")
 
+    # reference_tickers: the real build ships a REDUCED schema — no
+    # sic_description / market_cap — sectors() must degrade, not raise
+    (root / "data/raw/massive").mkdir(parents=True)
+    pl.DataFrame([{
+        "active": True, "cik": "0000000001", "composite_figi": "BBG000X1",
+        "currency_name": "usd", "last_updated_utc": "2026-01-01",
+        "locale": "us", "market": "stocks", "name": f"{t} Inc",
+        "primary_exchange": "XNYS", "share_class_figi": "BBG000Y1",
+        "ticker": t, "type": "CS",
+    } for t in TICKERS]).write_parquet(
+        root / "data/raw/massive/reference_tickers.parquet")
+
     return root

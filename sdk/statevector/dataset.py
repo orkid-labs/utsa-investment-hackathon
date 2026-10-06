@@ -451,11 +451,18 @@ class Dataset:
         return lf.collect().to_series().to_list()
 
     def sectors(self):
-        """ticker -> company name, industry, exchange, market cap."""
-        lf = self._scan("reference_tickers").select(
-            ["ticker", "name", "sic_description", "primary_exchange", "market_cap"]
-        )
-        return lf.collect().to_pandas()
+        """ticker -> company name, industry, exchange, market cap.
+
+        Columns absent from reference_tickers are omitted rather than
+        raising — this build ships a reduced schema (no sic_description
+        or market_cap), so callers must tolerate missing fields.
+        """
+        lf = self._scan("reference_tickers")
+        want = ["ticker", "name", "sic_description",
+                "primary_exchange", "market_cap"]
+        have = set(lf.collect_schema().names())
+        return lf.select([c for c in want if c in have]) \
+            .collect().to_pandas()
 
     def splits(self, tickers=None, start=None, end=None):
         """Stock split events from corporate_actions: (ticker, date, factor).
@@ -540,12 +547,28 @@ class Dataset:
         fundamentals(ticker, asof=on)."""
         return self.fundamentals(ticker, asof=on)
 
+    def _last_trading_day(self):
+        """Latest stocks_daily date from partition file stems — no data
+        scan (remote: index.json manifest; local: dir listing). Falls
+        back to trading_days() on non-partitioned builds."""
+        import re
+        if self.base is not None:
+            stems = [Path(f).stem for f in self._index
+                     .get("panels", {}).get("stocks_daily", {})
+                     .get("files", [])]
+        else:
+            part = self.root / "data" / "raw" / "massive" / "stocks_daily"
+            stems = [f.stem for f in part.glob("*.parquet")] \
+                if part.is_dir() else []
+        days = [_as_date(s) for s in stems
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s)]
+        return max(days) if days else max(self.trading_days())
+
     def holdout_cutoff(self, holdout_days: int = 30):
         """First date inside the sealed trailing holdout, anchored to
         the dataset's last trading day."""
         from .pit import holdout_cutoff as _hc
-        end = max(self.trading_days())
-        return _hc(holdout_days=holdout_days, end=end)
+        return _hc(holdout_days=holdout_days, end=self._last_trading_day())
 
     def holidays(self):
         """US market holiday calendar (rows: date, name, status)."""
