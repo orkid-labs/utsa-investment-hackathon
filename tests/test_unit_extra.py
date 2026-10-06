@@ -374,3 +374,22 @@ def test_last_trading_day_uses_remote_manifest(sv_fixture_root):
         "raw/massive/stocks_daily/2020-11-25.parquet",
     ]}}}
     assert ds._last_trading_day() == date(2021, 3, 5)
+
+
+# -- nested crypto panels: heterogeneous per-pair schemas --------------------
+
+def test_nested_crypto_tolerates_hetero_schema(tmp_path):
+    """raw_nested pair files may lack optional columns (e.g. vw) —
+    the rename must not crash; ticker comes from the directory name."""
+    import polars as pl
+    from statevector import Dataset
+    base = tmp_path / "data" / "raw" / "massive" / "crypto_minute"
+    (base / "X_AAUSD").mkdir(parents=True)
+    (base / "X_BBUSD").mkdir(parents=True)
+    pl.DataFrame({"t": [0], "o": [1.0], "c": [1.1], "vw": [1.05]}
+                 ).write_parquet(base / "X_AAUSD" / "2026-01-02.parquet")
+    pl.DataFrame({"t": [0], "o": [1.0], "c": [1.1]}
+                 ).write_parquet(base / "X_BBUSD" / "2026-01-02.parquet")
+    df = Dataset(tmp_path)._scan("crypto_minute").collect()
+    assert set(df["ticker"].to_list()) == {"X:AAUSD", "X:BBUSD"}
+    assert "close" in df.columns
