@@ -91,8 +91,9 @@ runs through 2026-11-03.
 
 Changes since the contest:
 
-- `Dataset.sectors()` tolerates the shipped `reference_tickers` schema
-  (no `sic_description`/`market_cap`) — previously raised
+- `Dataset.sectors()` left-joins the `ticker_sectors` structural
+  panel (SEC EDGAR SIC, current classification) and still tolerates
+  reduced `reference_tickers` schemas — previously raised
   `ColumnNotFoundError`.
 - `Dataset.holdout_cutoff()` resolves the last trading day from
   partition file stems instead of scanning all day-files (~85s → ~20ms

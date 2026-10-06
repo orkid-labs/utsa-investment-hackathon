@@ -346,6 +346,27 @@ def test_sectors_tolerates_reduced_schema(sv_fixture_root):
     assert len(df) == 3
 
 
+def test_sectors_joins_ticker_sectors_panel(sv_fixture_root):
+    """With the EDGAR enrichment panel present, sectors() surfaces
+    sic_code / sic_description / sector; without it the reduced-schema
+    path still holds (test above)."""
+    import polars as pl
+    from statevector import Dataset
+    tickers = ["AAPL", "MSFT", "NVDA"]
+    pl.DataFrame([{
+        "ticker": t, "cik": "0000000001", "sic_code": "3571",
+        "sic_description": "Electronic Computers",
+        "sector": "industrials_manufacturing",
+        "fetched_utc": "2026-10-05T00:00:00Z",
+    } for t in tickers]).write_parquet(
+        sv_fixture_root / "data/structural/ticker_sectors.parquet")
+    df = Dataset(sv_fixture_root).sectors()
+    assert {"ticker", "sic_code", "sic_description",
+            "sector"} <= set(df.columns)
+    assert df.sort_values("ticker")["sic_description"].tolist() == \
+        ["Electronic Computers"] * 3
+
+
 # -- holdout_cutoff / _last_trading_day: stems, not a full scan -------------
 
 def test_last_trading_day_falls_back_to_scan(sv_fixture_root):
