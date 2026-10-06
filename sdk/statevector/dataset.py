@@ -451,14 +451,30 @@ class Dataset:
         return lf.collect().to_series().to_list()
 
     def sectors(self):
-        """ticker -> company name, industry, exchange, market cap.
+        """ticker -> name, SIC classification, sector, exchange, market cap.
 
-        Columns absent from reference_tickers are omitted rather than
-        raising — this build ships a reduced schema (no sic_description
-        or market_cap), so callers must tolerate missing fields.
+        Joins reference_tickers with the ticker_sectors structural panel
+        (SEC EDGAR SIC — see tools/fetch_sectors.py). Columns absent from
+        either source are omitted rather than raising — older builds ship
+        a reduced schema (no SIC or market_cap), so callers must tolerate
+        missing fields.
+
+        PIT caveat: SIC/sector are CURRENT classifications (EDGAR serves
+        no historical membership). fetched_utc in ticker_sectors is the
+        provenance stamp; do not treat sector as point-in-time.
         """
         lf = self._scan("reference_tickers")
-        want = ["ticker", "name", "sic_description",
+        try:
+            sec = self._scan("ticker_sectors")
+            sec_cols = [c for c in ("ticker", "sic_code",
+                                    "sic_description", "sector")
+                        if c in sec.collect_schema().names()]
+            if "ticker" in sec_cols:
+                lf = lf.join(sec.select(sec_cols),
+                             on="ticker", how="left")
+        except (KeyError, FileNotFoundError):
+            pass
+        want = ["ticker", "name", "sic_code", "sic_description", "sector",
                 "primary_exchange", "market_cap"]
         have = set(lf.collect_schema().names())
         return lf.select([c for c in want if c in have]) \
