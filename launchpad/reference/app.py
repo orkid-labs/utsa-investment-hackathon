@@ -12,7 +12,7 @@ full documented dataset the way the rules intend:
     guidance surprise + confidence, Amihud illiquidity, realized diffusion,
     variance-risk premium, skew, mean-reversion speed, staleness and
     reporting-clock flags. No hand-rolled feature math.
-  - ``reference_tickers`` for sector caps; a bounded ``stocks_daily``
+  - ``ticker_details`` for sector caps; a bounded ``stocks_daily``
     slice for the dollar-volume floor
   - ``run_backtest`` from the shared engine for /backtest, identical to
     what the rubric recomputes
@@ -31,7 +31,6 @@ Run:
 from __future__ import annotations
 
 from datetime import date, timedelta
-from pathlib import Path
 
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query
@@ -57,7 +56,7 @@ MOM_FLOOR = -0.08             # drop names down >8% in ~10 trading days —
                              # value trap, not a signal
 BOOK_N = 18                   # final book size
 NAME_CAP = 0.15               # max weight per ticker
-SECTOR_CAP = 0.30             # max weight per sic_description
+SECTOR_CAP = 0.30             # max weight per coarse sector group
 REPORT_BLACKOUT_D = 5         # skip names reporting within N days
 
 # composite weights: positive term multiplies z(feature)
@@ -158,30 +157,23 @@ def _adv(cut: date) -> pl.DataFrame:
 
 
 def _cutoff(holdout_days: int = 30) -> date:
-    """Sealed-holdout boundary anchored to the dataset's last trading day —
-    same semantics as ds.holdout_cutoff() but the anchor comes straight
-    from the file manifest. trading_days() unbounded scans every day-file
-    remotely (~85s); a wall-clock window lands past the data snapshot."""
+    """Sealed-holdout boundary — ds.holdout_cutoff anchors to the last
+    partition file-stem (~20ms remotely since the SDK fix)."""
     if "cutoff" not in _cache:
-        if ds.base is not None:
-            files = ds._index["panels"]["stocks_daily"]["files"]
-            last = Path(files[-1]).stem
-        else:
-            d = ds.root / "data/raw/massive/stocks_daily"
-            last = sorted(d.glob("*.parquet"))[-1].stem
-        end = date.fromisoformat(last)
-        _cache["cutoff"] = end - timedelta(days=holdout_days)
+        _cache["cutoff"] = ds.holdout_cutoff(holdout_days)
     return _cache["cutoff"]
 
 
 def _sectors() -> dict:
-    """ticker → sector label. reference_tickers lacks sic_description in this
-    build, so fall back to per-ticker pseudo-sectors (cap never binds)."""
+    """ticker → sector label. Prefers the coarse `sector` rollup from
+    ticker_details (10 SIC divisions — the cap binds meaningfully);
+    falls back to sic_description, then per-ticker pseudo-sectors."""
     if "sectors" not in _cache:
         try:
             s = ds.sectors()
+            col = "sector" if "sector" in s.columns else "sic_description"
             _cache["sectors"] = dict(
-                zip(s["ticker"], s["sic_description"].fill_null("?")))
+                zip(s["ticker"], s[col].fillna("?")))
         except Exception:
             _cache["sectors"] = {}
     return _cache["sectors"]
