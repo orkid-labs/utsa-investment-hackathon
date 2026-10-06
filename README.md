@@ -95,6 +95,9 @@ Changes since the contest:
   panel (Massive ticker details, current snapshot) and still tolerates
   reduced `reference_tickers` schemas — previously raised
   `ColumnNotFoundError`.
+- `sector_attribution(rets, tickers, weights, ds.sector_map())`
+  reports per-sector exposure and buy-and-hold P&L contribution;
+  `Dataset.sector_map()` is the {ticker: sector} companion dict.
 - `Dataset.holdout_cutoff()` resolves the last trading day from
   partition file stems instead of scanning all day-files (~85s → ~20ms
   remote).
