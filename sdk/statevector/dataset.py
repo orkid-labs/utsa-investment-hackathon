@@ -190,12 +190,12 @@ class Dataset:
                 ren = {k: v for k, v in CRYPTO_RENAME.items()
                        if k in first_schema}
                 if ren:
-                    lf = lf.rename(ren)
+                    lf = lf.rename(ren, strict=False)
             elif name == "crypto_daily":
                 ren = {k: v for k, v in CRYPTO_RENAME.items()
                        if k in first_schema}
                 if ren:
-                    lf = lf.rename(ren)
+                    lf = lf.rename(ren, strict=False)
             return lf
 
         out = [fix(lf, rel) for rel, lf in scans]
