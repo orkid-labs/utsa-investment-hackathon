@@ -19,6 +19,7 @@ from .backtest import (
     STOCK_COST_BPS,
     apply_split_factors,
     run_backtest_series,
+    sector_attribution,
     validate_decision_series,
     run_backtest,
 )
@@ -26,6 +27,7 @@ from .backtest import (
 __all__ = [
     "run_backtest",
     "run_backtest_series",
+    "sector_attribution",
     "validate_decision_series",
     "apply_split_factors",
     "STOCK_COST_BPS",

@@ -216,6 +216,58 @@ def run_backtest(rets, dates: list, tickers: list[str], weights: list[float],
 
     return _perf_metrics(port, gross, turnover, invested)
 
+def sector_attribution(rets, tickers: list[str], weights: list[float],
+                       sector_map: dict, *, unmapped: str = "unmapped") -> dict:
+    """Per-sector exposure and buy-and-hold P&L contribution.
+
+    rets:       the same polars return frame passed to run_backtest —
+                one row per trading day, one col per priced leg.
+    tickers/weights: the target book (same lists run_backtest takes).
+    sector_map: {ticker: sector-or-None} — e.g. Dataset.sector_map().
+    unmapped:   bucket label for tickers with no sector.
+
+    contribution_i = target_w_i * (prod_t(1 + r_it) - 1): the leg's
+    buy-and-hold total return over the window times its target weight.
+    Legs absent from `rets` earn 0 (same as the engine). The sum of
+    contributions approximates gross return modulo rebalance drift and
+    costs — it is an attribution view, not the audited P&L.
+
+    Returns {"exposure": {...}, "contribution": {...},
+             "unmapped_weight": float, "n_unmapped": int}; each mapping
+    sorted by value descending.
+    """
+
+    def _sort(d):
+        return {k: round(v, 6)
+                for k, v in sorted(d.items(), key=lambda kv: -kv[1])}
+
+    exposure: dict[str, float] = {}
+    contribution: dict[str, float] = {}
+    unmapped_w = 0.0
+    n_unmapped = 0
+    for t, w in zip(tickers, weights):
+        sec = sector_map.get(t)
+        if not isinstance(sec, str) or not sec:
+            sec = unmapped
+        wgt = float(w)
+        exposure[sec] = exposure.get(sec, 0.0) + wgt
+        if sec == unmapped:
+            unmapped_w += wgt
+            n_unmapped += 1
+        leg_total = 0.0
+        if t in rets.columns:
+            col = np.asarray(rets[t].to_numpy(), dtype=float)
+            if col.size:
+                leg_total = float(
+                    np.prod(1.0 + np.nan_to_num(col, nan=0.0)) - 1.0)
+        contribution[sec] = contribution.get(sec, 0.0) + wgt * leg_total
+    return {
+        "exposure": _sort(exposure),
+        "contribution": _sort(contribution),
+        "unmapped_weight": round(unmapped_w, 6),
+        "n_unmapped": n_unmapped,
+    }
+
 # ---------------------------------------------------------------------------
 # Decision-series backtests (launchpad/rubric/decision-series.md)
 #

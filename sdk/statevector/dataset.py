@@ -482,6 +482,19 @@ class Dataset:
         return lf.select([c for c in want if c in have]) \
             .collect().to_pandas()
 
+    def sector_map(self) -> dict:
+        """ticker -> sector label, or None when unclassified.
+
+        Companion to sector_attribution() — pandas NaN and absent
+        columns normalize to None so the map has one falsey shape.
+        """
+        df = self.sectors()
+        col = df["sector"] if "sector" in df.columns else [None] * len(df)
+        return {
+            t: (s if isinstance(s, str) and s else None)
+            for t, s in zip(df["ticker"], col)
+        }
+
     def splits(self, tickers=None, start=None, end=None):
         """Stock split events from corporate_actions: (ticker, date, factor).
 
