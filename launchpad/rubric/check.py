@@ -43,6 +43,14 @@ def is_option(t: str) -> bool:
     return t.startswith("O:")
 
 
+# The judged metric set — pinned so engine additions (sortino, calmar,
+# hit_rate, var/cvar, exposure…) never leak into contestant scoring.
+CANON_METRICS = (
+    "n_days", "total_return", "ann_return", "ann_vol", "sharpe",
+    "max_drawdown", "turnover", "cost_total",
+)
+
+
 def leg_returns(ds, tickers: list[str], start: date, end: date,
                 dividends: bool = False):
     """Wide return frame for stock + option legs (0.0 for missing prints).
@@ -268,14 +276,19 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
                                    "— cannot verify total-return math")
         tol = exp.get("tolerance", 0.02)
         diffs = {}
-        for k, rv in ref.items():
+        n_ref = 0
+        for k in CANON_METRICS:
+            rv = ref.get(k)
+            if rv is None:        # suppressed (short window) — not compared
+                continue
+            n_ref += 1
             cv = body.get(k)
             if not isinstance(cv, (int, float)):
                 diffs[k] = f"missing/non-numeric (ref {rv:.4f})"
             elif abs(cv - rv) / max(abs(rv), 1e-9) > tol:
                 diffs[k] = f"got {cv:.4f} vs ref {rv:.4f}"
         if diffs:
-            frac = max(0.0, 1 - len(diffs) / len(ref))
+            frac = max(0.0, 1 - len(diffs) / max(n_ref, 1))
             return fail(check, f"value mismatches: {diffs}",
                         earned=round(pts * frac, 1))
 
@@ -298,7 +311,7 @@ def score_check(check, base: str, ds, universe: set, helpers: dict) -> dict:
         s_rep = body.get("sharpe")
         if not isinstance(s_rep, (int, float)):
             return fail(check, "sharpe missing/non-numeric")
-        if theirs and abs(s_rep - theirs["sharpe"]) > 0.05:
+        if theirs and theirs.get("sharpe") is not None and abs(s_rep - theirs["sharpe"]) > 0.05:
             return fail(check,
                         f"reported sharpe {s_rep} inconsistent with "
                         f"weights (recomputed {theirs['sharpe']:.4f})")
