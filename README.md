@@ -101,6 +101,11 @@ Changes since the contest:
 - `Dataset.sector_history()` exposes as-filed SIC history (SEC
   FSDS) and `Dataset.sector_map(asof=...)` resolves the PIT sector
   map — strict history, never a leak of the future sector.
+- `Dataset.news()` serves the exploded article x ticker-insight
+  panel (published_utc, sentiment, reasoning) — event-stamped,
+  knowable from the timestamp forward. `Dataset.short_volume()`
+  serves FINRA daily short volume (retention floor 2024-02);
+  `Dataset.short_interest()` serves the biweekly position.
 - `Dataset.holdout_cutoff()` resolves the last trading day from
   partition file stems instead of scanning all day-files (~85s → ~20ms
   remote).
