@@ -99,6 +99,8 @@ STRUCTURAL_TABLES = {
     "ticker_details",
     "sector_history",
     "short_interest",
+    "short_volume",
+    "news",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -555,6 +557,86 @@ class Dataset:
         return lf.collect()
 
 
+
+
+    def news(self, tickers=None, start=None, end=None):
+        """Massive news feed, one row per (article, ticker insight).
+
+        Rows: id, published_utc (UTC timestamp), ticker, sentiment
+        (positive/negative/neutral or null), sentiment_reasoning,
+        title, description, publisher, article_url. Articles whose
+        ``insights`` carry no per-ticker sentiment emit a row per
+        listed ticker with null sentiment — the mention itself is
+        preserved. Feed history starts 2016-06.
+
+        PIT: ``published_utc`` is the event time itself — a row is
+        knowable from that timestamp forward. For close-based
+        factors use rows strictly before the session close.
+
+        Returns a polars DataFrame; empty frame when the panel is
+        absent.
+        """
+        try:
+            lf = self._scan("news")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"id": pl.Utf8,
+                        "published_utc": pl.Datetime,
+                        "ticker": pl.Utf8,
+                        "sentiment": pl.Utf8,
+                        "sentiment_reasoning": pl.Utf8,
+                        "title": pl.Utf8,
+                        "description": pl.Utf8,
+                        "publisher": pl.Utf8,
+                        "article_url": pl.Utf8})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            lf = lf.filter(
+                pl.col("published_utc").dt.date() >= _as_date(start))
+        if end is not None:
+            lf = lf.filter(
+                pl.col("published_utc").dt.date() <= _as_date(end))
+        return lf.collect()
+
+
+    def short_volume(self, tickers=None, start=None, end=None):
+        """FINRA daily short volume per ticker.
+
+        Rows: date, ticker, total_volume, short_volume,
+        exempt_volume, non_exempt_volume, short_volume_ratio,
+        per-venue splits (nyse_*, nasdaq_*, adf_*). Daily granularity
+        vs the biweekly short_interest panel — the flow signal vs
+        the position snapshot. Feed retention starts 2024-02.
+
+        PIT: FINRA disseminates each day's file the following
+        business day — a row stamped ``date=D`` is knowable no
+        earlier than D+1.
+
+        Returns a polars DataFrame; empty frame when the panel is
+        absent.
+        """
+        try:
+            lf = self._scan("short_volume")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"date": pl.Utf8, "ticker": pl.Utf8,
+                        "total_volume": pl.Float64,
+                        "short_volume": pl.Float64,
+                        "exempt_volume": pl.Float64,
+                        "non_exempt_volume": pl.Float64,
+                        "short_volume_ratio": pl.Float64})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            lf = lf.filter(pl.col("date") >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("date") <= str(_as_date(end)))
+        return lf.collect()
     def sector_map(self, asof=None) -> dict:
         """ticker -> sector label, or None when unclassified.
 
