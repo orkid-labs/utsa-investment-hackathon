@@ -98,6 +98,7 @@ STRUCTURAL_TABLES = {
     "report_calendar_us",
     "ticker_details",
     "sector_history",
+    "short_interest",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -517,6 +518,42 @@ class Dataset:
         if end is not None:
             lf = lf.filter(pl.col("filed") <= _as_date(end))
         return lf.collect()
+
+    def short_interest(self, tickers=None, start=None, end=None):
+        """FINRA biweekly short interest per ticker.
+
+        Rows: ticker, settlement_date, short_interest,
+        avg_daily_volume, days_to_cover (2017-12 -> latest,
+        ~45k securities — a superset of the research universe).
+
+        PIT warning: settlement_date is the FINRA settlement date,
+        not publication — FINRA disseminates ~9 business days later.
+        Treat a row as knowable roughly two weeks after
+        settlement_date (like exchange data that arrives stamped
+        with the period, not the reveal).
+
+        Returns a polars DataFrame; empty frame when the panel is
+        absent.
+        """
+        try:
+            lf = self._scan("short_interest")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8,
+                        "settlement_date": pl.Date,
+                        "short_interest": pl.Float64,
+                        "avg_daily_volume": pl.Float64,
+                        "days_to_cover": pl.Float64})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            lf = lf.filter(pl.col("settlement_date") >= _as_date(start))
+        if end is not None:
+            lf = lf.filter(pl.col("settlement_date") <= _as_date(end))
+        return lf.collect()
+
 
     def sector_map(self, asof=None) -> dict:
         """ticker -> sector label, or None when unclassified.
