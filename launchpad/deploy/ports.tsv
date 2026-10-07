@@ -1,0 +1,4 @@
+port	service
+8000	utsa-dataserver
+8001	utsa-template (reference app)
+8002	next free — winner apps take 8002+
