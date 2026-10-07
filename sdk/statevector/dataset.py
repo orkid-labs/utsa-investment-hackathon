@@ -97,9 +97,16 @@ STRUCTURAL_TABLES = {
     "corporate_actions",
     "report_calendar_us",
     "ticker_details",
+    "sector_history",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
+# Instrument-class sector labels are immutable (a fund is always a
+# fund) — safe to carry at any asof, unlike SIC-division sectors.
+IMMUTABLE_SECTORS = frozenset({
+    "fund", "preferred", "adr", "unit", "spac", "rights", "warrant",
+})
+
 DERIVED_PANELS = {
     "microstructure_daily", "options_smile_daily", "options_greeks_daily",
     "state_vector", "state_vector_pca",
@@ -482,18 +489,81 @@ class Dataset:
         return lf.select([c for c in want if c in have]) \
             .collect().to_pandas()
 
-    def sector_map(self) -> dict:
+    def sector_history(self, tickers=None, start=None, end=None):
+        """As-filed SIC history per ticker — the PIT sector source.
+
+        Rows come from SEC Financial Statement Data Sets (quarterly,
+        2009Q1 -> latest): each row is the SIC a filer carried on a
+        submission filed that date. ``sectors()`` stays the current
+        snapshot; this panel is what a backtest should attribute
+        against — see ``sector_map(asof=...)``.
+
+        Returns a polars DataFrame (ticker, cik, filed, sic_code,
+        sector, form); empty frame when the panel is absent.
+        """
+        try:
+            lf = self._scan("sector_history")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8, "cik": pl.Utf8,
+                        "filed": pl.Date, "sic_code": pl.Utf8,
+                        "sector": pl.Utf8, "form": pl.Utf8})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            lf = lf.filter(pl.col("filed") >= _as_date(start))
+        if end is not None:
+            lf = lf.filter(pl.col("filed") <= _as_date(end))
+        return lf.collect()
+
+    def sector_map(self, asof=None) -> dict:
         """ticker -> sector label, or None when unclassified.
 
-        Companion to sector_attribution() — pandas NaN and absent
+        Companion to sector_attribution(). pandas NaN and absent
         columns normalize to None so the map has one falsey shape.
+
+        asof=None (default): current snapshot via ``sectors()`` —
+        reflects today's classifications regardless of the window
+        under study.
+
+        asof=<date>: point-in-time — each ticker's last as-filed SIC
+        at or before ``asof`` (``sector_history`` panel; SEC FSDS).
+        Instrument-class labels (IMMUTABLE_SECTORS) are carried at any
+        date; an issuer with neither history nor an instrument class
+        gets None — never its future sector.
         """
         df = self.sectors()
         col = df["sector"] if "sector" in df.columns else [None] * len(df)
-        return {
+        cur = {
             t: (s if isinstance(s, str) and s else None)
             for t, s in zip(df["ticker"], col)
         }
+        if asof is None:
+            return cur
+        asof_d = _as_date(asof)
+        try:
+            hist = (self._scan("sector_history")
+                    .filter(pl.col("filed") <= asof_d)
+                    .sort(["ticker", "filed"])
+                    .group_by("ticker", maintain_order=True)
+                    .agg(pl.last("sector"))
+                    .collect())
+            hist_map = dict(zip(hist["ticker"].to_list(),
+                                hist["sector"].to_list()))
+        except (KeyError, FileNotFoundError):
+            hist_map = {}
+        out = {}
+        for t, c in cur.items():
+            s = hist_map.get(t)
+            if isinstance(s, str) and s:
+                out[t] = s
+            elif c in IMMUTABLE_SECTORS:
+                out[t] = c
+            else:
+                out[t] = None
+        return out
 
     def splits(self, tickers=None, start=None, end=None):
         """Stock split events from corporate_actions: (ticker, date, factor).

@@ -98,6 +98,9 @@ Changes since the contest:
 - `sector_attribution(rets, tickers, weights, ds.sector_map())`
   reports per-sector exposure and buy-and-hold P&L contribution;
   `Dataset.sector_map()` is the {ticker: sector} companion dict.
+- `Dataset.sector_history()` exposes as-filed SIC history (SEC
+  FSDS) and `Dataset.sector_map(asof=...)` resolves the PIT sector
+  map — strict history, never a leak of the future sector.
 - `Dataset.holdout_cutoff()` resolves the last trading day from
   partition file stems instead of scanning all day-files (~85s → ~20ms
   remote).
