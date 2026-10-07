@@ -306,7 +306,20 @@ def _asof_actuals(act_all: pd.DataFrame, cal_all: pd.DataFrame,
     fd = sorted(cal["filing_date"].tolist())
     import bisect
 
+    # exact period->filing map once report_calendar_us carries
+    # period_end (FSDS adsh backfill): the real knowable date even
+    # for late filers beyond the 95d window. First filing wins when
+    # a period was filed more than once (original + amendment).
+    pe_map: dict = {}
+    if "period_end" in cal.columns:
+        for p, g in cal.dropna(subset=["period_end"]) \
+                        .groupby("period_end"):
+            pe_map[pd.Timestamp(p).date()] = min(g["filing_date"])
+
     def knowable(period_end: date) -> date:
+        hit = pe_map.get(pd.Timestamp(period_end).date())
+        if hit is not None:
+            return hit
         # first filing strictly after period_end + 4d, within 95d
         i = bisect.bisect_right(fd, period_end + timedelta(days=4))
         if i < len(fd) and (fd[i] - period_end).days <= 95:
