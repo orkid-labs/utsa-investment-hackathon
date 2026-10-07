@@ -83,3 +83,58 @@ def test_amended_period_uses_first_filing():
     out = _asof_actuals(_act(pe), cal, "X", [date(2020, 5, 8)])
     assert pd.Timestamp(out["asof_date"].iloc[0]) == \
         pd.Timestamp(date(2020, 5, 8))
+
+
+def test_post_close_acceptance_bumps_to_next_day():
+    """Accepted 16:30 ET -> not knowable at that close; knowable
+    next session."""
+    pe = date(2020, 3, 31)
+    filed = date(2020, 5, 8)
+    cal = _cal([{"ticker": "X", "filing_date": filed,
+                 "period_end": pe,
+                 "acceptance_datetime": "2020-05-08T16:30:00"}])
+    out = _asof_actuals(_act(pe), cal, "X", [filed, date(2020, 5, 9)])
+    assert pd.isna(out["asof_date"].iloc[0])
+    assert pd.Timestamp(out["asof_date"].iloc[1]) == \
+        pd.Timestamp("2020-05-09")
+
+
+def test_pre_close_acceptance_same_day():
+    pe = date(2020, 3, 31)
+    filed = date(2020, 5, 8)
+    cal = _cal([{"ticker": "X", "filing_date": filed,
+                 "period_end": pe,
+                 "acceptance_datetime": "2020-05-08T14:01:00"}])
+    out = _asof_actuals(_act(pe), cal, "X", [filed])
+    assert pd.Timestamp(out["asof_date"].iloc[0]) == \
+        pd.Timestamp(filed)
+
+
+def test_null_acceptance_same_day():
+    pe = date(2020, 3, 31)
+    filed = date(2020, 5, 8)
+    cal = _cal([{"ticker": "X", "filing_date": filed,
+                 "period_end": pe, "acceptance_datetime": None}])
+    out = _asof_actuals(_act(pe), cal, "X", [filed])
+    assert pd.Timestamp(out["asof_date"].iloc[0]) == \
+        pd.Timestamp(filed)
+
+
+def test_acceptance_bump_applies_inside_window_path():
+    """Period not in pe_map: the 95d window search must also use
+    bumped dates — a post-close filing does not count until next
+    session there either."""
+    pe = date(2020, 3, 31)
+    filed = date(2020, 5, 8)
+    # period_end of the FILING differs from the actuals period so the
+    # exact map misses and the window path handles it
+    cal = _cal([{"ticker": "X", "filing_date": filed,
+                 "period_end": date(2019, 12, 31),
+                 "acceptance_datetime": "2020-05-08T17:30:00"}])
+    out = _asof_actuals(_act(pe), cal, "X",
+                        [filed, date(2020, 5, 9)])
+    assert pd.isna(out["asof_date"].iloc[0])
+    assert pd.Timestamp(out["asof_date"].iloc[1]) == \
+        pd.Timestamp("2020-05-09")
+
+

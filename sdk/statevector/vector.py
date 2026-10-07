@@ -303,7 +303,18 @@ def _asof_actuals(act_all: pd.DataFrame, cal_all: pd.DataFrame,
                 "asof_date": pd.Series(pd.NaT, index=dates),
                 "events": pd.DataFrame(columns=["asof", "sales_rev_turn"])}
     cal = cal_all[cal_all["ticker"] == ticker]
-    fd = sorted(cal["filing_date"].tolist())
+    # knowable filing date: a filing accepted after 16:00 ET was not
+    # knowable at that session's close — bump one day.
+    # acceptance_datetime comes from the EDGAR submissions backfill;
+    # absent column or null value -> knowable the same day.
+    kd = pd.to_datetime(cal["filing_date"])
+    if "acceptance_datetime" in cal.columns:
+        acc = pd.to_datetime(cal["acceptance_datetime"],
+                             errors="coerce")
+        kd = kd + pd.to_timedelta(
+            acc.dt.hour.ge(16).fillna(False).astype(int), unit="d")
+    cal = cal.assign(_kd=kd)
+    fd = sorted(kd.tolist())
     import bisect
 
     # exact period->filing map once report_calendar_us carries
@@ -314,17 +325,18 @@ def _asof_actuals(act_all: pd.DataFrame, cal_all: pd.DataFrame,
     if "period_end" in cal.columns:
         for p, g in cal.dropna(subset=["period_end"]) \
                         .groupby("period_end"):
-            pe_map[pd.Timestamp(p).date()] = min(g["filing_date"])
+            pe_map[pd.Timestamp(p).date()] = min(g["_kd"])
 
     def knowable(period_end: date) -> date:
-        hit = pe_map.get(pd.Timestamp(period_end).date())
+        pe_ts = pd.Timestamp(period_end)
+        hit = pe_map.get(pe_ts.date())
         if hit is not None:
             return hit
         # first filing strictly after period_end + 4d, within 95d
-        i = bisect.bisect_right(fd, period_end + timedelta(days=4))
-        if i < len(fd) and (fd[i] - period_end).days <= 95:
+        i = bisect.bisect_right(fd, pe_ts + pd.Timedelta(days=4))
+        if i < len(fd) and (fd[i] - pe_ts).days <= 95:
             return fd[i]
-        return period_end + timedelta(days=45)
+        return pe_ts + pd.Timedelta(days=45)
 
     act["asof"] = [knowable(d) for d in act["date"]]
     act = act.sort_values("asof")
