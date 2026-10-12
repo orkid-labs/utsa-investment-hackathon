@@ -105,7 +105,7 @@ STRUCTURAL_TABLES = {
     "futures_sessions", "futures_minute", "futures_meta",
     "futures_roll", "futures_labels", "futures_anchors",
     "futures_anchor_map", "anchor_daily", "futures_vol",
-    "futures_macro",
+    "futures_macro", "futures_news",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -1024,6 +1024,36 @@ class Dataset:
                         "curve_2s10": pl.Float64,
                         "inflation__cpi_yoy": pl.Float64,
                         "market__unemp": pl.Float64})
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+
+    def futures_news(self, product_code=None, start=None,
+                     end=None):
+        """News-arrival + sentiment composite per (product_code,
+        session_end_date). Each root maps to a proxy ticker
+        (SPY/QQQ/.../FXE/IBIT/ETHA); features are trailing
+        article counts (1/3/7d) and mean sentiment score where
+        labeled coverage exists — null-masked otherwise (never
+        zero-filled). Thin-coverage proxies (FX ETFs) carry
+        counts with sentiment null per the spec's coverage gate.
+        """
+        try:
+            lf = self._scan("futures_news")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "news_n_1d": pl.UInt32,
+                        "news_sent_mean_7d": pl.Float64})
+        if product_code is not None:
+            lf = lf.filter(pl.col("product_code")
+                           == product_code)
         if start is not None:
             lf = lf.filter(pl.col("session_end_date")
                            >= str(_as_date(start)))
