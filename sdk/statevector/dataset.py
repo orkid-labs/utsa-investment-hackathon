@@ -104,7 +104,7 @@ STRUCTURAL_TABLES = {
     "futures_products", "futures_contracts", "futures_schedules",
     "futures_sessions", "futures_minute", "futures_meta",
     "futures_roll", "futures_labels", "futures_anchors",
-    "futures_anchor_map", "anchor_daily",
+    "futures_anchor_map", "anchor_daily", "futures_vol",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -952,6 +952,41 @@ class Dataset:
                         "fut_close": pl.Float64,
                         "anchor_close": pl.Float64,
                         "basis_bps": pl.Float64})
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+
+    def futures_vol(self, roots=None, start=None, end=None):
+        """Volatility + breadth per (product_code, session_end_date).
+
+        Realized vol on the revealed front contract: ret_1d,
+        rv_5d/21d/63d (annualized), park_21d (Parkinson H-L),
+        atr14_pct. Term structure: slope_bps (2nd-deferred/front
+        - 1). Breadth across the root's singles: n_contracts,
+        adv_share, ret_disp, front_vol_share. Regime: vix_close,
+        vix_chg_1d (masked null before the 2023-02 I:VIX depth
+        floor — never zero-filled). All inputs complete at
+        session close -> knowable at next open.
+        """
+        try:
+            lf = self._scan("futures_vol")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "front_ticker": pl.Utf8,
+                        "rv_21d": pl.Float64,
+                        "adv_share": pl.Float64,
+                        "vix_close": pl.Float64})
         if isinstance(roots, str):
             roots = [roots]
         if roots is not None:
