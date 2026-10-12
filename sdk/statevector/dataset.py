@@ -101,6 +101,9 @@ STRUCTURAL_TABLES = {
     "short_interest",
     "short_volume",
     "news",
+    "futures_products", "futures_contracts", "futures_schedules",
+    "futures_sessions", "futures_minute", "futures_meta",
+    "futures_roll", "futures_labels",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -637,6 +640,251 @@ class Dataset:
         if end is not None:
             lf = lf.filter(pl.col("date") <= str(_as_date(end)))
         return lf.collect()
+    # ---- futures (Apex universe) --------------------------------
+    # All futures panels are PIT: contracts/products keyed by as-of
+    # `date`, sessions/schedules/labels keyed by `session_end_date`,
+    # minute bars by `window_start` (ns int64, UTC). Missing data
+    # stays null — nothing is zero-filled.
+
+    def futures_products(self, roots=None, asof=None):
+        """Massive futures product specs, one row per (root, date).
+
+        Daily PIT snapshots: product_code, asset_sub_class,
+        trading_venue, trade_currency_code, unit_of_measure(+_qty),
+        settlement_currency_code, settlement_method, type, sector
+        fields. Filter ``roots`` by product_code; ``asof`` keeps the
+        latest row at or before the date (per root).
+        """
+        try:
+            lf = self._scan("futures_products")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(schema={"product_code": pl.Utf8,
+                                        "date": pl.Utf8})
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if asof is not None:
+            lf = (lf.filter(pl.col("date") <= str(_as_date(asof)))
+                  .group_by("product_code").agg(pl.all().last()))
+        return lf.collect()
+
+    def futures_contracts(self, tickers=None, roots=None,
+                          start=None, end=None,
+                          singles_only=True):
+        """Dated futures contract records per as-of ``date``.
+
+        Rows: ticker, product_code, date, active, first/last trade
+        date, settlement_date, days_to_maturity, tick sizes, venue,
+        group_code, type. Massive labels some calendar spreads
+        ``type=single`` — ``singles_only`` (default) also drops
+        tickers containing ``-``.
+        """
+        try:
+            lf = self._scan("futures_contracts")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(schema={"ticker": pl.Utf8,
+                                        "product_code": pl.Utf8,
+                                        "date": pl.Utf8})
+        if singles_only:
+            lf = lf.filter(~pl.col("ticker").str.contains("-"))
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("date") >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("date") <= str(_as_date(end)))
+        return lf.collect()
+
+    def futures_schedules(self, roots=None, start=None, end=None):
+        """CME session schedule events (Massive F06).
+
+        Rows: product_code, product_name, session_end_date,
+        trading_venue, event (pre_open/open/pause/close/...),
+        timestamp (UTC ISO). Endpoint history is ~2y back with
+        forward-dated sessions — older calendars are reconstructed
+        from observed futures_sessions coverage.
+        """
+        try:
+            lf = self._scan("futures_schedules")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(schema={"product_code": pl.Utf8,
+                                        "session_end_date": pl.Utf8,
+                                        "event": pl.Utf8,
+                                        "timestamp": pl.Utf8})
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(
+                pl.col("session_end_date") >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(
+                pl.col("session_end_date") <= str(_as_date(end)))
+        return lf.collect()
+
+    def futures_sessions(self, tickers=None, roots=None,
+                         start=None, end=None):
+        """Per-contract session bars (resolution=1session).
+
+        Rows: ticker, product_code, session_end_date, window_start
+        (ns int64 session-open), open, high, low, close, volume,
+        transactions, dollar_volume, settlement_price. Settlement
+        is distinct from last-trade close — use the column that
+        matches the label convention.
+        """
+        try:
+            lf = self._scan("futures_sessions")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8, "product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "window_start": pl.Int64,
+                        "open": pl.Float64, "high": pl.Float64,
+                        "low": pl.Float64, "close": pl.Float64,
+                        "volume": pl.Float64,
+                        "settlement_price": pl.Float64})
+        if tickers is not None or roots is not None or \
+                start is not None or end is not None:
+            if isinstance(tickers, str):
+                tickers = [tickers]
+            if isinstance(roots, str):
+                roots = [roots]
+            if tickers is not None:
+                lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+            if roots is not None:
+                lf = lf.filter(
+                    pl.col("product_code").is_in(list(roots)))
+            if start is not None:
+                lf = lf.filter(pl.col("session_end_date")
+                               >= str(_as_date(start)))
+            if end is not None:
+                lf = lf.filter(pl.col("session_end_date")
+                               <= str(_as_date(end)))
+        return lf.collect()
+
+    def futures_minute(self, tickers=None, roots=None,
+                       start=None, end=None, front_only=False):
+        """1-minute bars for front contracts (bounded window).
+
+        Rows: ticker, product_code, window_start (ns int64),
+        session_end_date (asof-joined), OHLCV, transactions,
+        is_front_day. ``front_only=True`` keeps only bars on days
+        the contract was the front.
+        """
+        try:
+            lf = self._scan("futures_minute")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8, "product_code": pl.Utf8,
+                        "window_start": pl.Int64,
+                        "session_end_date": pl.Utf8,
+                        "open": pl.Float64, "high": pl.Float64,
+                        "low": pl.Float64, "close": pl.Float64,
+                        "volume": pl.Float64,
+                        "is_front_day": pl.Boolean})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if isinstance(roots, str):
+            roots = [roots]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if front_only:
+            lf = lf.filter(pl.col("is_front_day"))
+        if start is not None:
+            lf = lf.filter(
+                pl.col("window_start") >=
+                (_as_date(start) - _date(1970, 1, 1)).days
+                * 86_400_000_000_000)
+        if end is not None:
+            lf = lf.filter(
+                pl.col("window_start") <
+                ((_as_date(end) - _date(1970, 1, 1)).days + 1)
+                * 86_400_000_000_000)
+        return lf.collect()
+
+    def futures_meta(self):
+        """One row per Apex root: parent_code, is_micro, tick sizes,
+        unit_of_measure_qty, currency, venue (latest product row)."""
+        try:
+            return self._scan("futures_meta").collect()
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(schema={"product_code": pl.Utf8,
+                                        "parent_code": pl.Utf8,
+                                        "is_micro": pl.Boolean})
+
+    def futures_roll(self, roots=None, start=None, end=None):
+        """Front-contract calendar per (product_code, date).
+
+        Rows: product_code, date, front_ticker, front_dtm,
+        next_ticker, is_roll_day, front_near_expiry. Front = active
+        single contract with smallest days_to_maturity as-of that
+        date — fields knowable at the time, no retroactive picks.
+        """
+        try:
+            lf = self._scan("futures_roll")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8, "date": pl.Utf8,
+                        "front_ticker": pl.Utf8,
+                        "is_roll_day": pl.Boolean})
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("date") >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("date") <= str(_as_date(end)))
+        return lf.collect()
+
+    def futures_labels(self, tickers=None, roots=None,
+                       start=None, end=None, labeled_only=False):
+        """Next-session labels per (ticker, session_end_date).
+
+        y_cc: close->close next session; y_settle: settlement->
+        settlement (never conflated with close); y_oc: next open->
+        close (Apex flat-by-close leg). Flags: is_last_session,
+        expires_next, is_roll_boundary (parent root front changes
+        at t+1), horizon_hours (session-open to next open).
+        Labels are same-contract; rolls live in futures_roll.
+        """
+        try:
+            lf = self._scan("futures_labels")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "y_cc": pl.Float64, "y_oc": pl.Float64,
+                        "y_settle": pl.Float64,
+                        "horizon_hours": pl.Float64})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if isinstance(roots, str):
+            roots = [roots]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        if labeled_only:
+            lf = lf.filter(pl.col("y_cc").is_not_null())
+        return lf.collect()
+
     def sector_map(self, asof=None) -> dict:
         """ticker -> sector label, or None when unclassified.
 
