@@ -105,6 +105,7 @@ STRUCTURAL_TABLES = {
     "futures_sessions", "futures_minute", "futures_meta",
     "futures_roll", "futures_labels", "futures_anchors",
     "futures_anchor_map", "anchor_daily", "futures_vol",
+    "futures_macro",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -991,6 +992,38 @@ class Dataset:
             roots = [roots]
         if roots is not None:
             lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+
+    def futures_macro(self, start=None, end=None):
+        """Macro context on the futures session axis.
+
+        One row per session_end_date: EFFR + ON RRP, UST 3m/2y/10y
+        (+ curve_2s10, curve_3m10y), market inflation
+        expectations (5y/10y/5y5y), CPI/PCE, labor (unemp,
+        jolts). Every series carries `<tag>__period`,
+        `<tag>__knowable` and `<tag>_age_days` — observations
+        join on knowable_date = period + publication lag (daily
+        series +1d, monthly CPI/labor +35d); the value carried
+        is the last *published* non-null row, and age records
+        its staleness. Nulls masked, never zero-filled.
+        """
+        try:
+            lf = self._scan("futures_macro")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"session_end_date": pl.Utf8,
+                        "conditions__effr": pl.Float64,
+                        "yields__ust10y": pl.Float64,
+                        "curve_2s10": pl.Float64,
+                        "inflation__cpi_yoy": pl.Float64,
+                        "market__unemp": pl.Float64})
         if start is not None:
             lf = lf.filter(pl.col("session_end_date")
                            >= str(_as_date(start)))
