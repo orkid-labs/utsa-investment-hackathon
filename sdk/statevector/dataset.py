@@ -106,6 +106,9 @@ STRUCTURAL_TABLES = {
     "futures_roll", "futures_labels", "futures_anchors",
     "futures_anchor_map", "anchor_daily", "futures_vol",
     "futures_macro", "futures_news",
+    "futures_ticks", "futures_micro",
+    "etf_flows", "etf_constituents", "etf_profiles",
+    "options_snapshots", "apex_constraints", "futures_state_vector",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -1054,6 +1057,185 @@ class Dataset:
         if product_code is not None:
             lf = lf.filter(pl.col("product_code")
                            == product_code)
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+
+    def futures_ticks(self, product_code=None, ticker=None,
+                      session=None, kind=None, limit=None):
+        """Raw tick captures (kind='trade'|'quote') for front
+        contracts over the bounded sampling window — spec §1.3.
+        Nanosecond timestamps preserved as Int64.
+        """
+        try:
+            lf = self._scan("futures_ticks")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8, "kind": pl.Utf8,
+                        "timestamp": pl.Int64})
+        if product_code is not None:
+            lf = lf.filter(pl.col("product_code") == product_code)
+        if ticker is not None:
+            lf = lf.filter(pl.col("ticker") == ticker)
+        if session is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           == str(_as_date(session)))
+        if kind is not None:
+            lf = lf.filter(pl.col("kind") == kind)
+        if limit is not None:
+            lf = lf.limit(int(limit))
+        return lf.collect()
+
+    def futures_micro(self, product_code=None, start=None,
+                      end=None):
+        """L-layer microstructure per (product_code, session):
+        kyle_lambda, liq_velocity, spread_med_ticks/mean_bps,
+        depth_mean, imb_mean, quote_age_med_ms — computed from
+        raw ticks in the sampling window. has_ticks=False rows
+        keep all features null (never zero-filled).
+        """
+        try:
+            lf = self._scan("futures_micro")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "has_ticks": pl.Boolean})
+        if product_code is not None:
+            lf = lf.filter(pl.col("product_code") == product_code)
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+    def etf_flows(self, ticker=None, start=None, end=None):
+        """ETF Global fund flows (P01): fund_flow, nav,
+        shares_outstanding per processed_date with
+        staleness_days = processed − effective gap. Consumers
+        join on processed_date only (timing rule 17 hard
+        assertion); effective_date is covariate, not join key.
+        """
+        try:
+            lf = self._scan("etf_flows")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8,
+                        "processed_date": pl.Utf8,
+                        "fund_flow": pl.Float64})
+        if ticker is not None:
+            lf = lf.filter(pl.col("ticker") == ticker)
+        if start is not None:
+            lf = lf.filter(pl.col("processed_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("processed_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+    def etf_constituents(self, ticker=None, start=None,
+                         end=None):
+        """ETF Global constituents (P02) as per-processed_date
+        aggregates: n_holdings, top1/top5/top10 weights, HHI —
+        constituent-grade breadth without a member-level table.
+        """
+        try:
+            lf = self._scan("etf_constituents")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8,
+                        "processed_date": pl.Utf8,
+                        "n_holdings": pl.Int64})
+        if ticker is not None:
+            lf = lf.filter(pl.col("ticker") == ticker)
+        if start is not None:
+            lf = lf.filter(pl.col("processed_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("processed_date")
+                           <= str(_as_date(end)))
+        return lf.collect()
+
+    def etf_profiles(self, ticker=None):
+        """ETF Global profiles (P03-quarantined metadata):
+        latest-as-of issuer/AUM/category fields per ticker.
+        Analytics endpoint is not entitled — never registered.
+        """
+        try:
+            lf = self._scan("etf_profiles")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"ticker": pl.Utf8})
+        if ticker is not None:
+            lf = lf.filter(pl.col("ticker") == ticker)
+        return lf.collect()
+
+    def options_snapshots(self, underlying=None,
+                          captured_date=None):
+        """Append-only options snapshot archive (spec §5.1):
+        one row per (underlying, contract, captured_date) with
+        OI, day OHLCV, last quote/trade, greeks where present.
+        No historical selector exists on the endpoint — archive
+        accrues from 2026-10-14 onward; earlier history is
+        permanently unavailable (spec: zero-mask past).
+        """
+        try:
+            lf = self._scan("options_snapshots")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"captured_date": pl.Utf8,
+                        "underlying": pl.Utf8,
+                        "contract": pl.Utf8})
+        if underlying is not None:
+            lf = lf.filter(pl.col("underlying") == underlying)
+        if captured_date is not None:
+            lf = lf.filter(pl.col("captured_date")
+                           == str(_as_date(captured_date)))
+        return lf.collect()
+
+    def apex_constraints(self, scope=None, product_code=None):
+        """Apex 50K EOD Trail rule panel: account-level limits
+        (capital/drawdown/daily-loss/eval window) + per-root
+        max_contracts (6 parent / 60 micro). EOD-flat and
+        pre-open submission rules are booleans on the account
+        scope.
+        """
+        try:
+            lf = self._scan("apex_constraints")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"scope": pl.Utf8, "rule": pl.Utf8,
+                        "value": pl.Float64})
+        if scope is not None:
+            lf = lf.filter(pl.col("scope") == scope)
+        if product_code is not None:
+            lf = lf.filter(pl.col("product_code") == product_code)
+        return lf.collect()
+
+
+    def futures_state_vector(self, product_code=None,
+                             start=None, end=None):
+        """The Phase-6 composite — one row per (contract,
+        session) joining all futures layers (sessions, labels,
+        anchors, vol, macro, news, micro, partner flows/
+        breadth, Apex caps). Feature nulls masked, never filled.
+        """
+        try:
+            lf = self._scan("futures_state_vector")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "y_cc": pl.Float64})
+        if product_code is not None:
+            lf = lf.filter(pl.col("product_code") == product_code)
         if start is not None:
             lf = lf.filter(pl.col("session_end_date")
                            >= str(_as_date(start)))
