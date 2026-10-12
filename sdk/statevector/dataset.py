@@ -103,7 +103,8 @@ STRUCTURAL_TABLES = {
     "news",
     "futures_products", "futures_contracts", "futures_schedules",
     "futures_sessions", "futures_minute", "futures_meta",
-    "futures_roll", "futures_labels",
+    "futures_roll", "futures_labels", "futures_anchors",
+    "futures_anchor_map", "anchor_daily",
 }
 
 # canonical derived panels built by tools/build_*.py (dir-partitioned)
@@ -883,6 +884,84 @@ class Dataset:
                            <= str(_as_date(end)))
         if labeled_only:
             lf = lf.filter(pl.col("y_cc").is_not_null())
+        return lf.collect()
+
+    def anchor_daily(self, tickers=None, start=None, end=None):
+        """Daily OHLCV for cross-market anchors (indices, forex,
+        ETFs) pulled via /v2/aggs — not the futures panels.
+
+        Rows: ticker (I:SPX / C:EURUSD / SPY ...), date, open, high,
+        low, close, volume, vwap, transactions. Note Massive's
+        index-depth limit: I:* series start ~2023-02 (I:RUT
+        2024-09); canonical index_daily + ETF fallbacks cover
+        deeper history in futures_anchors.
+        """
+        try:
+            lf = self._scan("anchor_daily")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(schema={"ticker": pl.Utf8,
+                                        "date": pl.Utf8,
+                                        "close": pl.Float64})
+        if isinstance(tickers, str):
+            tickers = [tickers]
+        if tickers is not None:
+            lf = lf.filter(pl.col("ticker").is_in(list(tickers)))
+        if start is not None:
+            lf = lf.filter(pl.col("date") >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("date") <= str(_as_date(end)))
+        return lf.collect()
+
+    def futures_anchor_map(self):
+        """Static config: product_code -> anchor_ticker, kind,
+        direction (direct|invert for USD-quoted FX spots),
+        is_proxy (e.g. NKD -> EWJ). Explicit config, not inferred.
+        """
+        try:
+            return self._scan("futures_anchor_map").collect()
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "anchor_ticker": pl.Utf8,
+                        "anchor_kind": pl.Utf8,
+                        "direction": pl.Utf8,
+                        "is_proxy": pl.Boolean})
+
+    def futures_anchors(self, roots=None, start=None, end=None):
+        """Per (product_code, session_end_date): the front contract
+        and its cash-market anchor.
+
+        front_ticker via futures_roll min-dtm rule where the
+        contracts panel has records (2025-03+), else the
+        volume-revealed front (front_rule column marks which —
+        both are knowable by next open). fut_close/fut_settle
+        kept distinct; anchor_close is the underlying's daily
+        close (inverted for USDJPY/USDCHF conventions);
+        basis_bps = (fut_close/anchor_ref - 1) * 1e4; is_proxy
+        marks ETF-proxy anchor days (NKD->EWJ and pre-depth
+        index gaps filled by SPY/QQQ/DIA/IWM/MDY).
+        """
+        try:
+            lf = self._scan("futures_anchors")
+        except (KeyError, FileNotFoundError):
+            return pl.DataFrame(
+                schema={"product_code": pl.Utf8,
+                        "session_end_date": pl.Utf8,
+                        "front_ticker": pl.Utf8,
+                        "front_rule": pl.Utf8,
+                        "fut_close": pl.Float64,
+                        "anchor_close": pl.Float64,
+                        "basis_bps": pl.Float64})
+        if isinstance(roots, str):
+            roots = [roots]
+        if roots is not None:
+            lf = lf.filter(pl.col("product_code").is_in(list(roots)))
+        if start is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           >= str(_as_date(start)))
+        if end is not None:
+            lf = lf.filter(pl.col("session_end_date")
+                           <= str(_as_date(end)))
         return lf.collect()
 
     def sector_map(self, asof=None) -> dict:
